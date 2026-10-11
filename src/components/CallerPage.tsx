@@ -738,6 +738,98 @@ export const CallerPage: React.FC<CallerPageProps> = ({
     platformCreds.discord.guildId,
   ]);
 
+  // Discord Voice Channel state (for direct Voice Channel audio streaming)
+  const [discordVoiceState, setDiscordVoiceState] = useState<{
+    connected: boolean;
+    channelId?: string;
+    channelName?: string;
+    guildId?: string;
+    isSpeaking?: boolean;
+    isVoiceChannel?: boolean;
+  }>({ connected: false });
+  const [isJoiningDiscordVc, setIsJoiningDiscordVc] = useState<boolean>(false);
+
+  const handleJoinDiscordVoiceChannel = useCallback(async () => {
+    const cfg = platformCreds.discord;
+    const token = cfg.botToken?.trim().replace(/^Bot\s+/i, '');
+    const channelId = cfg.channelId?.trim();
+    if (!token || !channelId) {
+      alert('Please enter your Discord Bot Token and target Channel ID first.');
+      return;
+    }
+
+    setIsJoiningDiscordVc(true);
+    try {
+      const resp = await fetch('/api/caller/discord/join-vc', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ botToken: token, channelId, guildId: cfg.guildId }),
+      });
+      const data = await resp.json();
+      if (data.ok) {
+        setDiscordVoiceState({
+          connected: true,
+          channelId: data.channelId,
+          channelName: data.channelName,
+          guildId: data.guildId,
+          isSpeaking: false,
+          isVoiceChannel: true,
+        });
+        if (data.guildId) {
+          discordBotRunner.joinVoiceChannel(data.guildId, channelId);
+        }
+        setPlatformActivityLog((prev) => [
+          {
+            id: `act_${Date.now()}`,
+            platform: 'discord',
+            action: 'Joined Voice Channel',
+            message: `Connected to Voice Channel #${data.channelName || channelId}. Ready to stream audio directly into voice call!`,
+            timestamp: new Date().toLocaleTimeString(),
+            status: 'success',
+          },
+          ...prev,
+        ]);
+      } else {
+        alert(data.error || 'Failed to join voice channel');
+      }
+    } catch (err: any) {
+      alert(err.message || 'Error joining voice channel');
+    } finally {
+      setIsJoiningDiscordVc(false);
+    }
+  }, [platformCreds.discord]);
+
+  const handleLeaveDiscordVoiceChannel = useCallback(async () => {
+    const cfg = platformCreds.discord;
+    const token = cfg.botToken?.trim().replace(/^Bot\s+/i, '');
+    const channelId = discordVoiceState.channelId || cfg.channelId?.trim();
+    const guildId = discordVoiceState.guildId || cfg.guildId?.trim();
+    if (!token) return;
+
+    try {
+      await fetch('/api/caller/discord/leave-vc', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ botToken: token, guildId, channelId }),
+      });
+      if (guildId) {
+        discordBotRunner.leaveVoiceChannel(guildId);
+      }
+      setDiscordVoiceState({ connected: false });
+      setPlatformActivityLog((prev) => [
+        {
+          id: `act_${Date.now()}`,
+          platform: 'discord',
+          action: 'Left Voice Channel',
+          message: 'Disconnected from Discord voice channel.',
+          timestamp: new Date().toLocaleTimeString(),
+          status: 'info',
+        },
+        ...prev,
+      ]);
+    } catch {}
+  }, [discordVoiceState, platformCreds.discord]);
+
   const handleConnectDiscord = useCallback(async () => {
     const cfg = platformCreds.discord;
     const token = cfg.botToken?.trim().replace(/^Bot\s+/i, '');
@@ -3037,6 +3129,10 @@ export const CallerPage: React.FC<CallerPageProps> = ({
         onNavigateToDocs={onNavigateToDocs}
         discordStatus={discordGatewayStatus}
         onConnectDiscord={handleConnectDiscord}
+        discordVoiceState={discordVoiceState}
+        onJoinDiscordVoiceChannel={handleJoinDiscordVoiceChannel}
+        onLeaveDiscordVoiceChannel={handleLeaveDiscordVoiceChannel}
+        isJoiningDiscordVc={isJoiningDiscordVc}
         frontendMonitorAudio={frontendMonitorAudio}
         onToggleFrontendMonitorAudio={() => setFrontendMonitorAudio((prev) => !prev)}
       />

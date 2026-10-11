@@ -22,6 +22,8 @@ import {
   ShieldCheck,
   Radio,
   BookOpen,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import { PlatformCredentials, PlatformActivityLogItem } from './CallerPage';
 import { OMNICHANNEL_LOGOS } from '../constants';
@@ -47,6 +49,17 @@ export interface OmnichannelGatewaysGridProps {
     botUser?: { id: string; username: string } | null;
   };
   onConnectDiscord?: () => void;
+  discordVoiceState?: {
+    connected: boolean;
+    channelId?: string;
+    channelName?: string;
+    guildId?: string;
+    isSpeaking?: boolean;
+    isVoiceChannel?: boolean;
+  };
+  onJoinDiscordVoiceChannel?: () => Promise<void>;
+  onLeaveDiscordVoiceChannel?: () => Promise<void>;
+  isJoiningDiscordVc?: boolean;
   frontendMonitorAudio?: boolean;
   onToggleFrontendMonitorAudio?: () => void;
 }
@@ -68,6 +81,10 @@ export const OmnichannelGatewaysGrid: React.FC<OmnichannelGatewaysGridProps> = (
   onNavigateToDocs,
   discordStatus,
   onConnectDiscord,
+  discordVoiceState,
+  onJoinDiscordVoiceChannel,
+  onLeaveDiscordVoiceChannel,
+  isJoiningDiscordVc = false,
   frontendMonitorAudio = false,
   onToggleFrontendMonitorAudio,
 }) => {
@@ -1079,10 +1096,73 @@ export const OmnichannelGatewaysGrid: React.FC<OmnichannelGatewaysGridProps> = (
                 }
                 className="w-full px-2.5 py-1.5 rounded-xl bg-neutral-50 border border-neutral-200 text-xs font-medium text-neutral-900 focus:outline-none focus:border-violet-500"
               >
+                <option value="voice_channel_direct">Direct Voice Channel Streaming (Join VC &amp; Speak Live via Discord Voice API)</option>
                 <option value="voice_bridge">Two-Way Voice Bridge (Call Room + Audio Attachments)</option>
                 <option value="direct_call">Direct User Audio DM &amp; Call Alert</option>
                 <option value="audio_bot">Interactive Channel Audio Receptionist</option>
               </select>
+            </div>
+
+            {/* Direct Discord Voice Channel Audio Streaming Controls */}
+            <div className="p-2.5 rounded-xl bg-violet-50/80 border border-violet-200/90 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span
+                    className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                      discordVoiceState?.connected
+                        ? 'bg-emerald-500 ring-2 ring-emerald-200 animate-pulse'
+                        : 'bg-neutral-300'
+                    }`}
+                  />
+                  <span className="text-[11px] font-bold text-violet-950 truncate">
+                    {discordVoiceState?.connected
+                      ? `Voice Channel: #${discordVoiceState.channelName || discordVoiceState.channelId}`
+                      : 'Discord Voice Channel (Join VC & Speak)'}
+                  </span>
+                </div>
+                {discordVoiceState?.isSpeaking && (
+                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-100 text-amber-800 animate-pulse flex items-center gap-1">
+                    <Volume2 className="w-2.5 h-2.5" />
+                    Speaking
+                  </span>
+                )}
+              </div>
+
+              <p className="text-[10px] text-violet-800/80 leading-snug">
+                Instead of only posting audio files to chat, Hana joins the voice channel directly based on Channel ID and transmits audio using Discord&apos;s Voice Gateway APIs.
+              </p>
+
+              <div className="flex items-center gap-1.5 pt-0.5">
+                {discordVoiceState?.connected ? (
+                  <button
+                    type="button"
+                    onClick={onLeaveDiscordVoiceChannel}
+                    className="flex-1 py-1 px-2 rounded-lg bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition-all"
+                  >
+                    <VolumeX className="w-3 h-3" />
+                    <span>Leave Voice Channel</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={isJoiningDiscordVc || !platformCreds.discord.channelId}
+                    onClick={onJoinDiscordVoiceChannel}
+                    className="flex-1 py-1 px-2 rounded-lg bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer shadow-2xs transition-all"
+                  >
+                    {isJoiningDiscordVc ? (
+                      <>
+                        <RefreshCw className="w-3 h-3 animate-spin" />
+                        <span>Joining Voice...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Volume2 className="w-3 h-3" />
+                        <span>Join Voice Channel</span>
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Webhook Endpoint */}

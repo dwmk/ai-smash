@@ -35,6 +35,8 @@ import {
   Camera,
   Move,
   RotateCcw,
+  Skull,
+  ArrowLeft,
 } from 'lucide-react';
 
 export interface AnimationItem {
@@ -88,7 +90,10 @@ interface ActDirectorPageProps {
   onNavigateHome?: () => void;
 }
 
-export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }) => {
+export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
+  onBackToChat,
+  onNavigateHome,
+}) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const timelineScrollRef = useRef<HTMLDivElement>(null);
@@ -1784,15 +1789,27 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
           </div>
 
           {isRailExpanded && (
-            <button
-              type="button"
-              onClick={handleCollapseRail}
-              className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-700 dark:hover:text-white text-xs font-medium cursor-pointer transition-colors"
-              title="Fold up panel"
-              aria-label="Fold up panel"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
+            <div className="flex items-center gap-1">
+              {onBackToChat && (
+                <button
+                  type="button"
+                  onClick={onBackToChat}
+                  className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-700 dark:hover:text-white text-xs font-medium cursor-pointer transition-colors"
+                  title="Return to /chat"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={handleCollapseRail}
+                className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-700 dark:hover:text-white text-xs font-medium cursor-pointer transition-colors"
+                title="Fold up panel"
+                aria-label="Fold up panel"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+            </div>
           )}
         </div>
 

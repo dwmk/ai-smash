@@ -142,6 +142,38 @@ class DiscordBotRunner {
     return this.isRunning;
   }
 
+  public joinVoiceChannel(guildId: string, channelId: string) {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(
+        JSON.stringify({
+          op: 4,
+          d: {
+            guild_id: guildId,
+            channel_id: channelId,
+            self_mute: false,
+            self_deaf: false,
+          },
+        })
+      );
+    }
+  }
+
+  public leaveVoiceChannel(guildId: string) {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(
+        JSON.stringify({
+          op: 4,
+          d: {
+            guild_id: guildId,
+            channel_id: null,
+            self_mute: false,
+            self_deaf: false,
+          },
+        })
+      );
+    }
+  }
+
   private connect() {
     if (!this.isRunning || !this.currentIntegration?.botToken) return;
 

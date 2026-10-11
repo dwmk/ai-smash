@@ -993,21 +993,23 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                                   Experience Hana&apos;s AI Interview
                                 </span>
                                 <span className="text-[11px] text-neutral-500 block">
-                                  Interactive candidate POV with webcam/mic check, live voice &amp; recruiter review
+                                  Interactive candidate screening, recruiter studio, NeonDB persistence &amp; dossiers
                                 </span>
                               </div>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  onNavigateToInterview
-                                    ? onNavigateToInterview('/interview?id=demo')
-                                    : onStartChat()
-                                }
-                                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold bg-[#0f9bc7] hover:bg-[#117ba2] text-white shadow-xs hover:shadow transition-all active:scale-95 cursor-pointer shrink-0"
-                              >
-                                <span>Launch AI Interview</span>
-                                <ArrowRight className="w-3.5 h-3.5" />
-                              </button>
+                              <div className="flex items-center gap-2 flex-wrap shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    onNavigateToInterview
+                                      ? onNavigateToInterview('/interview?id=demo')
+                                      : onStartChat()
+                                  }
+                                  className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-[#0f9bc7] hover:bg-[#117ba2] text-white shadow-xs hover:shadow transition-all active:scale-95 cursor-pointer"
+                                >
+                                  <span>Launch Demo</span>
+                                  <ArrowRight className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
                             </div>
                           )}
 

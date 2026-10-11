@@ -134,3 +134,46 @@ VALUES
 ON CONFLICT (code) DO UPDATE SET
   unlocked_outfit_ids = EXCLUDED.unlocked_outfit_ids;
 
+-- 6. INTERVIEWS TABLE
+-- Stores custom designed interview configurations created by premium recruiters.
+CREATE TABLE IF NOT EXISTS interviews (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  target_role TEXT NOT NULL,
+  company_name TEXT NOT NULL DEFAULT 'MuxAI',
+  description TEXT,
+  created_by_user_id INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+  created_by_email TEXT,
+  config JSONB NOT NULL DEFAULT '{}',
+  questions JSONB NOT NULL DEFAULT '[]',
+  tasks JSONB NOT NULL DEFAULT '{}',
+  company_qa_knowledge JSONB NOT NULL DEFAULT '[]',
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_interviews_created_by ON interviews(created_by_user_id);
+CREATE INDEX IF NOT EXISTS idx_interviews_active ON interviews(active);
+
+-- 7. INTERVIEW SUBMISSIONS TABLE
+-- Stores completed candidate interview sessions, responses, snapshots, and ratings.
+CREATE TABLE IF NOT EXISTS interview_submissions (
+  id TEXT PRIMARY KEY,
+  interview_id TEXT NOT NULL REFERENCES interviews(id) ON DELETE CASCADE,
+  candidate_name TEXT NOT NULL,
+  candidate_email TEXT,
+  status TEXT NOT NULL DEFAULT 'completed',
+  score INTEGER DEFAULT 85,
+  responses JSONB NOT NULL DEFAULT '[]',
+  snapshots JSONB NOT NULL DEFAULT '[]',
+  resume_data JSONB,
+  written_task TEXT,
+  pressure_rating TEXT,
+  ai_evaluation JSONB,
+  completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_interview_subs_interview_id ON interview_submissions(interview_id);
+
+

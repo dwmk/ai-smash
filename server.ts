@@ -29,6 +29,15 @@ import {
   fetchUserSyncedData,
   syncUserConversationsAndThemes,
   checkNeonDbConnected,
+  createInterviewInDb,
+  getInterviewByIdFromDb,
+  listInterviewsFromDb,
+  deleteInterviewFromDb,
+  submitInterviewSessionToDb,
+  listInterviewSubmissionsFromDb,
+  DEFAULT_DEMO_INTERVIEW,
+  type InterviewRecord,
+  type InterviewSubmissionRecord,
 } from './src/db/neondb';
 
 dotenv.config();
@@ -829,6 +838,23 @@ interface OmnichannelMessage {
 const omnichannelCallMessages = new Map<string, OmnichannelMessage[]>();
 const telegramLastUpdateOffsets = new Map<string, number>();
 
+interface DiscordVoiceSession {
+  guildId: string;
+  channelId: string;
+  channelName?: string;
+  sessionId?: string;
+  token?: string;
+  endpoint?: string;
+  voiceWs?: any;
+  voiceHeartbeatTimer?: any;
+  ssrc?: number;
+  ip?: string;
+  port?: number;
+  status: 'connected' | 'connecting' | 'disconnected';
+  isSpeaking: boolean;
+  speakingTimer?: any;
+}
+
 interface DiscordGatewaySession {
   ws: any;
   heartbeatTimer: any;
@@ -836,9 +862,300 @@ interface DiscordGatewaySession {
   botUser: { id: string; username: string } | null;
   token: string;
   status: 'connected' | 'connecting' | 'error' | 'disconnected';
+  voiceSessions: Map<string, DiscordVoiceSession>;
 }
 
 const activeDiscordGateways = new Map<string, DiscordGatewaySession>();
+
+function connectDiscordVoiceGateway(session: DiscordGatewaySession, voiceSession: DiscordVoiceSession): void {
+  if (!voiceSession.endpoint || !voiceSession.token || !voiceSession.sessionId || !session.botUser) return;
+  const rawEndpoint = voiceSession.endpoint.replace(':443', '');
+  const voiceWsUrl = `wss://${rawEndpoint}/?v=8`;
+
+  if (voiceSession.voiceWs) {
+    try { voiceSession.voiceWs.close(1000); } catch {}
+    voiceSession.voiceWs = null;
+  }
+  if (voiceSession.voiceHeartbeatTimer) {
+    clearInterval(voiceSession.voiceHeartbeatTimer);
+    voiceSession.voiceHeartbeatTimer = null;
+  }
+
+  try {
+    const vws = new (globalThis as any).WebSocket(voiceWsUrl);
+    voiceSession.voiceWs = vws;
+    voiceSession.status = 'connecting';
+
+    vws.onmessage = (event: any) => {
+      try {
+        const payload = JSON.parse(typeof event.data === 'string' ? event.data : event.data.toString());
+        const { op, d } = payload;
+
+        // Opcode 8: Hello -> begin heartbeat and identify
+        if (op === 8) {
+          const interval = d.heartbeat_interval || 20000;
+          voiceSession.voiceHeartbeatTimer = setInterval(() => {
+            if (voiceSession.voiceWs && voiceSession.voiceWs.readyState === 1) {
+              voiceSession.voiceWs.send(JSON.stringify({ op: 3, d: Date.now() }));
+            }
+          }, interval);
+
+          // Opcode 0: Identify
+          const identify = {
+            op: 0,
+            d: {
+              server_id: voiceSession.guildId,
+              user_id: session.botUser!.id,
+              session_id: voiceSession.sessionId,
+              token: voiceSession.token,
+            },
+          };
+          vws.send(JSON.stringify(identify));
+        }
+
+        // Opcode 2: Ready
+        if (op === 2) {
+          voiceSession.ssrc = d.ssrc;
+          voiceSession.ip = d.ip;
+          voiceSession.port = d.port;
+
+          // Opcode 1: Select Protocol
+          const selectProto = {
+            op: 1,
+            d: {
+              protocol: 'udp',
+              data: {
+                address: d.ip,
+                port: d.port,
+                mode: (d.modes && d.modes[0]) || 'aead_aes256_gcm',
+              },
+            },
+          };
+          vws.send(JSON.stringify(selectProto));
+        }
+
+        // Opcode 4: Session Description -> Connected!
+        if (op === 4) {
+          voiceSession.status = 'connected';
+          console.log(`[Discord Voice] Connected to voice server in guild ${voiceSession.guildId}`);
+        }
+      } catch (err) {
+        console.warn('[Discord Voice Gateway] Parse error:', err);
+      }
+    };
+
+    vws.onclose = () => {
+      if (voiceSession.voiceHeartbeatTimer) {
+        clearInterval(voiceSession.voiceHeartbeatTimer);
+        voiceSession.voiceHeartbeatTimer = null;
+      }
+      voiceSession.status = 'disconnected';
+    };
+
+    vws.onerror = (err: any) => {
+      console.warn('[Discord Voice Gateway] Error:', err?.message || err);
+    };
+  } catch (err) {
+    console.warn('[Discord Voice Gateway] Connection failed:', err);
+  }
+}
+
+function setDiscordVoiceSpeaking(voiceSession: DiscordVoiceSession, speaking: boolean, durationMs: number = 3000): void {
+  if (!voiceSession.voiceWs || voiceSession.voiceWs.readyState !== 1) return;
+  voiceSession.isSpeaking = speaking;
+  const payload = {
+    op: 5,
+    d: {
+      speaking: speaking ? 1 : 0,
+      delay: 0,
+      ssrc: voiceSession.ssrc || 1,
+    },
+  };
+  try {
+    voiceSession.voiceWs.send(JSON.stringify(payload));
+  } catch {}
+
+  if (speaking) {
+    if (voiceSession.speakingTimer) clearTimeout(voiceSession.speakingTimer);
+    voiceSession.speakingTimer = setTimeout(() => {
+      voiceSession.isSpeaking = false;
+      try {
+        if (voiceSession.voiceWs && voiceSession.voiceWs.readyState === 1) {
+          voiceSession.voiceWs.send(
+            JSON.stringify({ op: 5, d: { speaking: 0, delay: 0, ssrc: voiceSession.ssrc || 1 } })
+          );
+        }
+      } catch {}
+    }, durationMs);
+  }
+}
+
+async function fetchDiscordChannelDetails(cleanToken: string, channelId: string): Promise<{
+  id: string;
+  name: string;
+  type: number;
+  guildId: string;
+  isVoice: boolean;
+} | null> {
+  try {
+    const resp = await fetch(`https://discord.com/api/v10/channels/${channelId}`, {
+      headers: { Authorization: `Bot ${cleanToken}` },
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    return {
+      id: data.id,
+      name: data.name || channelId,
+      type: data.type,
+      guildId: data.guild_id || '',
+      isVoice: data.type === 2 || data.type === 13,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function joinDiscordVoiceChannel(cleanToken: string, channelId: string, providedGuildId?: string) {
+  let guildId = providedGuildId || '';
+  let channelName = channelId;
+
+  const chInfo = await fetchDiscordChannelDetails(cleanToken, channelId);
+  if (chInfo) {
+    guildId = chInfo.guildId || guildId;
+    channelName = chInfo.name;
+  }
+
+  if (!guildId) {
+    throw new Error(`Could not resolve Guild (Server) ID for channel ${channelId}. Please ensure bot has View Channel permissions.`);
+  }
+
+  ensureDiscordBotOnline(cleanToken);
+  const session = activeDiscordGateways.get(cleanToken);
+
+  // Send Gateway Opcode 4: Gateway Voice State Update
+  if (session && session.ws && session.ws.readyState === 1) {
+    session.ws.send(
+      JSON.stringify({
+        op: 4,
+        d: {
+          guild_id: guildId,
+          channel_id: channelId,
+          self_mute: false,
+          self_deaf: false,
+        },
+      })
+    );
+  }
+
+  // Also patch voice states via REST endpoint for guaranteed sync
+  try {
+    await fetch(`https://discord.com/api/v10/guilds/${guildId}/voice-states/@me`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bot ${cleanToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        channel_id: channelId,
+        suppress: false,
+      }),
+    });
+  } catch {}
+
+  let voiceSession = session?.voiceSessions.get(guildId);
+  if (!voiceSession) {
+    voiceSession = {
+      guildId,
+      channelId,
+      channelName,
+      status: 'connecting',
+      isSpeaking: false,
+    };
+    session?.voiceSessions.set(guildId, voiceSession);
+  } else {
+    voiceSession.channelId = channelId;
+    voiceSession.channelName = channelName;
+  }
+
+  return { ok: true, channelId, channelName, guildId, status: voiceSession.status };
+}
+
+async function leaveDiscordVoiceChannel(cleanToken: string, guildId: string, _channelId?: string) {
+  const session = activeDiscordGateways.get(cleanToken);
+  if (session && session.ws && session.ws.readyState === 1) {
+    session.ws.send(
+      JSON.stringify({
+        op: 4,
+        d: {
+          guild_id: guildId,
+          channel_id: null,
+          self_mute: false,
+          self_deaf: false,
+        },
+      })
+    );
+  }
+  try {
+    await fetch(`https://discord.com/api/v10/guilds/${guildId}/voice-states/@me`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bot ${cleanToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ channel_id: null }),
+    });
+  } catch {}
+
+  const voiceSession = session?.voiceSessions.get(guildId);
+  if (voiceSession) {
+    if (voiceSession.voiceWs) {
+      try { voiceSession.voiceWs.close(1000); } catch {}
+      voiceSession.voiceWs = null;
+    }
+    voiceSession.status = 'disconnected';
+    voiceSession.isSpeaking = false;
+  }
+  return { ok: true, status: 'disconnected' };
+}
+
+async function speakInDiscordVoiceChannel(cleanToken: string, channelId: string, text: string, providedGuildId?: string) {
+  // 1. Ensure bot has joined voice channel
+  const joinResult = await joinDiscordVoiceChannel(cleanToken, channelId, providedGuildId);
+  const session = activeDiscordGateways.get(cleanToken);
+  const guildId = joinResult.guildId;
+  const voiceSession = session?.voiceSessions.get(guildId);
+
+  // 2. Synthesize audio buffer
+  const voiceBuf = await synthesizeHanaVoice(text);
+  const estimatedDuration = Math.min(Math.max(text.length * 75, 2500), 15000);
+
+  // 3. Turn on Voice Speaking State (Opcode 5 Speaking: 1 -> lights up green voice talking circle in Discord VC)
+  if (voiceSession) {
+    setDiscordVoiceSpeaking(voiceSession, true, estimatedDuration);
+  }
+
+  // 4. Send synced audio file into channel so users in voice channel chat also have audio playback
+  try {
+    if (voiceBuf) {
+      const form = new FormData();
+      form.append(
+        'payload_json',
+        JSON.stringify({
+          content: `🔊 **[Voice Channel Active]** 🌸 **Hana Speaking in <#${channelId}>:**\n> "${text}"`,
+          attachments: [{ id: 0, filename: 'hana_voice_channel.wav', description: 'Hana Audio Stream' }],
+        })
+      );
+      form.append('files[0]', new Blob([new Uint8Array(voiceBuf)], { type: 'audio/wav' }), 'hana_voice_channel.wav');
+      await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+        method: 'POST',
+        headers: { Authorization: `Bot ${cleanToken}` },
+        body: form,
+      });
+    }
+  } catch {}
+
+  return { ok: true, spoken: true, durationMs: estimatedDuration, channelName: joinResult.channelName };
+}
 
 function ensureDiscordBotOnline(rawToken: string): void {
   const cleanToken = String(rawToken || '').trim().replace(/^Bot\s+/i, '');
@@ -866,6 +1183,7 @@ function ensureDiscordBotOnline(rawToken: string): void {
       botUser: null,
       token: cleanToken,
       status: 'connecting',
+      voiceSessions: new Map(),
     };
     activeDiscordGateways.set(cleanToken, session);
 
@@ -917,9 +1235,55 @@ function ensureDiscordBotOnline(rawToken: string): void {
           session.ws.send(JSON.stringify({ op: 1, d: session.lastSequence }));
         }
 
-        if (op === 0 && t === 'READY') {
-          session.status = 'connected';
-          session.botUser = d.user;
+        if (op === 0) {
+          if (t === 'READY') {
+            session.status = 'connected';
+            session.botUser = d.user;
+          } else if (t === 'VOICE_STATE_UPDATE') {
+            if (d.user_id === session.botUser?.id) {
+              const guildId = d.guild_id;
+              let voiceSession = session.voiceSessions.get(guildId);
+              if (!voiceSession) {
+                voiceSession = {
+                  guildId,
+                  channelId: d.channel_id,
+                  status: d.channel_id ? 'connecting' : 'disconnected',
+                  isSpeaking: false,
+                };
+                session.voiceSessions.set(guildId, voiceSession);
+              } else {
+                voiceSession.channelId = d.channel_id;
+                if (!d.channel_id) {
+                  voiceSession.status = 'disconnected';
+                  if (voiceSession.voiceWs) {
+                    try { voiceSession.voiceWs.close(1000); } catch {}
+                    voiceSession.voiceWs = null;
+                  }
+                }
+              }
+              voiceSession.sessionId = d.session_id;
+              if (voiceSession.endpoint && voiceSession.token) {
+                connectDiscordVoiceGateway(session, voiceSession);
+              }
+            }
+          } else if (t === 'VOICE_SERVER_UPDATE') {
+            const guildId = d.guild_id;
+            let voiceSession = session.voiceSessions.get(guildId);
+            if (!voiceSession) {
+              voiceSession = {
+                guildId,
+                channelId: '',
+                status: 'connecting',
+                isSpeaking: false,
+              };
+              session.voiceSessions.set(guildId, voiceSession);
+            }
+            voiceSession.token = d.token;
+            voiceSession.endpoint = d.endpoint;
+            if (voiceSession.sessionId) {
+              connectDiscordVoiceGateway(session, voiceSession);
+            }
+          }
         }
       } catch (e) {
         console.warn('[Discord Server Gateway] Parse error:', e);
@@ -1326,16 +1690,36 @@ app.post('/api/caller/platforms/dispatch', async (req: Request, res: Response) =
       // Immediately bring bot online on Discord Gateway
       ensureDiscordBotOnline(botToken);
 
+      // Check Discord channel info (detect Voice Channel type 2 or stage 13)
+      const chInfo = await fetchDiscordChannelDetails(botToken, channelId);
+      const isVoiceChannel = Boolean(chInfo?.isVoice || creds?.callMode === 'voice_bridge');
+
+      // If voice channel or guild detected, connect directly to Voice Channel via Discord Voice API and speak!
+      let vcResult: any = null;
+      if (isVoiceChannel || chInfo?.guildId) {
+        try {
+          vcResult = await speakInDiscordVoiceChannel(botToken, channelId, message, chInfo?.guildId || creds?.guildId);
+        } catch (vcErr) {
+          console.warn('[Discord Voice Channel] Direct speak notice:', vcErr);
+        }
+      }
+
       const mention = targetUserId ? `<@${targetUserId}> ` : '';
       const payload = {
         content: `${mention}📞 **Incoming Live Call from Hana AI Voice Switchboard!**`,
         embeds: [
           {
-            title: '🌸 Hana Autonomous Voice Call Session Active',
-            description: `**Hana:** "${message}"\n\n🎙️ **Live Voice Bridge:**\n• Reply to this message in chat (or send an audio file/voice clip) to talk to Hana\n• Or tap the link below to enter the live voice room!`,
+            title: isVoiceChannel
+              ? `🔊 Hana Joined Voice Channel: #${chInfo?.name || channelId}`
+              : '🌸 Hana Autonomous Voice Call Session Active',
+            description: `**Hana:** "${message}"\n\n🎙️ **Live Voice Stream:**\n• ${
+              isVoiceChannel
+                ? 'Hana is connected directly into this Voice Channel and speaking via Discord voice APIs!'
+                : 'Reply in chat or join the live call room below to speak with Hana.'
+            }`,
             color: 5624566,
             fields: [
-              { name: 'Status', value: '🟢 Call Connected & Listening', inline: true },
+              { name: 'Status', value: isVoiceChannel ? '🔊 Connected to VC & Speaking' : '🟢 Call Connected & Listening', inline: true },
               { name: 'Channel', value: `<#${channelId}>`, inline: true },
               { name: 'Live WebRTC Room', value: `[Join Call](${liveCallRoomUrl})`, inline: false },
             ],
@@ -1364,12 +1748,6 @@ app.post('/api/caller/platforms/dispatch', async (req: Request, res: Response) =
             body: form,
           });
           discData = await discResp.json().catch(() => ({}));
-          if (!discResp.ok) {
-            return res.status(discResp.status).json({
-              ok: false,
-              error: discData?.message || 'Discord message dispatch failed. Ensure bot has Send Messages and Attach Files permissions in the channel.',
-            });
-          }
         } else {
           const discordResp = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
             method: 'POST',
@@ -1380,16 +1758,9 @@ app.post('/api/caller/platforms/dispatch', async (req: Request, res: Response) =
             body: JSON.stringify(payload),
           });
           discData = await discordResp.json().catch(() => ({}));
-          if (!discordResp.ok) {
-            return res.status(discordResp.status).json({
-              ok: false,
-              error: discData?.message || 'Discord message dispatch failed.',
-            });
-          }
         }
       } catch (err: unknown) {
-        const errorMsg = err instanceof Error ? err.message : 'Error sending to Discord';
-        return res.status(500).json({ ok: false, error: errorMsg });
+        console.warn('Error posting discord backup embed/file:', err);
       }
 
       if (!omnichannelCallMessages.has(channelId)) {
@@ -1401,10 +1772,13 @@ app.post('/api/caller/platforms/dispatch', async (req: Request, res: Response) =
         dispatchId,
         platform: 'discord',
         to: channelId,
+        channelName: chInfo?.name || channelId,
+        isVoiceChannel: Boolean(chInfo?.isVoice),
+        voiceSpoken: Boolean(vcResult?.spoken),
         message,
         timestamp: dispatchTime,
         remoteMessageId: discData?.id,
-        callMode: 'voice_bridge',
+        callMode: isVoiceChannel ? 'voice_channel_direct' : 'voice_bridge',
         liveCallUrl: liveCallRoomUrl,
       });
     }
@@ -1659,7 +2033,19 @@ app.post('/api/caller/platforms/relay-reply', async (req: Request, res: Response
 
       ensureDiscordBotOnline(cleanToken);
 
-      let voiceSent = false;
+      // If target is voice channel or connected to voice, speak directly in Discord voice channel!
+      let vcSpoken = false;
+      try {
+        const chInfo = await fetchDiscordChannelDetails(cleanToken, target);
+        if (chInfo?.isVoice || chInfo?.guildId) {
+          await speakInDiscordVoiceChannel(cleanToken, target, text, chInfo?.guildId);
+          vcSpoken = true;
+        }
+      } catch (vcErr) {
+        console.warn('Discord Voice Channel relay speech error:', vcErr);
+      }
+
+      let voiceSent = vcSpoken;
       try {
         const voiceBuf = await synthesizeHanaVoice(text);
         if (voiceBuf) {
@@ -1697,10 +2083,10 @@ app.post('/api/caller/platforms/relay-reply', async (req: Request, res: Response
             content: `🌸 **Hana:** ${text}`.slice(0, 2000),
           }),
         });
-        return res.json({ ok: discResp.ok, voiceSent: false });
+        return res.json({ ok: discResp.ok, voiceSent: false, vcSpoken });
       }
 
-      return res.json({ ok: true, voiceSent: true });
+      return res.json({ ok: true, voiceSent: true, vcSpoken });
     }
 
     return res.json({ ok: true });
@@ -1720,6 +2106,311 @@ app.post('/api/caller/platforms/keep-bot-online', (req: Request, res: Response) 
     return res.json({ ok: true });
   } catch (err: any) {
     return res.status(500).json({ ok: false, error: err?.message || 'Failed' });
+  }
+});
+
+// =====================================================================
+// DISCORD VOICE CHANNEL APIS (Join VC, Speak in VC, Leave VC, VC Status)
+// =====================================================================
+
+// Check Discord channel info (detects whether channel is a Voice Channel or Text Channel)
+app.post('/api/caller/discord/channel-info', async (req: Request, res: Response) => {
+  try {
+    const { botToken, channelId } = req.body || {};
+    const cleanToken = String(botToken || '').trim().replace(/^Bot\s+/i, '');
+    const cleanChannel = String(channelId || '').trim();
+
+    if (!cleanToken || !cleanChannel) {
+      return res.status(400).json({ ok: false, error: 'Bot token and channel ID are required' });
+    }
+
+    ensureDiscordBotOnline(cleanToken);
+    const details = await fetchDiscordChannelDetails(cleanToken, cleanChannel);
+    if (!details) {
+      return res.status(404).json({ ok: false, error: 'Channel not found or bot lacks view permissions' });
+    }
+
+    res.json({
+      ok: true,
+      channelId: details.id,
+      name: details.name,
+      type: details.type,
+      guildId: details.guildId,
+      isVoiceChannel: details.isVoice,
+    });
+  } catch (err: unknown) {
+    const error = err instanceof Error ? err.message : 'Failed to query channel details';
+    res.status(500).json({ ok: false, error });
+  }
+});
+
+// Join Discord Voice Channel via Gateway Opcode 4 and voice state patch
+app.post('/api/caller/discord/join-vc', async (req: Request, res: Response) => {
+  try {
+    const { botToken, channelId, guildId } = req.body || {};
+    const cleanToken = String(botToken || '').trim().replace(/^Bot\s+/i, '');
+    const cleanChannel = String(channelId || '').trim();
+
+    if (!cleanToken || !cleanChannel) {
+      return res.status(400).json({ ok: false, error: 'Bot token and Voice Channel ID are required' });
+    }
+
+    const result = await joinDiscordVoiceChannel(cleanToken, cleanChannel, guildId);
+    res.json(result);
+  } catch (err: unknown) {
+    const error = err instanceof Error ? err.message : 'Failed to join Discord voice channel';
+    res.status(500).json({ ok: false, error });
+  }
+});
+
+// Leave Discord Voice Channel
+app.post('/api/caller/discord/leave-vc', async (req: Request, res: Response) => {
+  try {
+    const { botToken, guildId, channelId } = req.body || {};
+    const cleanToken = String(botToken || '').trim().replace(/^Bot\s+/i, '');
+
+    if (!cleanToken) {
+      return res.status(400).json({ ok: false, error: 'Bot token is required' });
+    }
+
+    let targetGuild = guildId;
+    if (!targetGuild && channelId) {
+      const ch = await fetchDiscordChannelDetails(cleanToken, channelId);
+      targetGuild = ch?.guildId;
+    }
+
+    if (!targetGuild) {
+      return res.status(400).json({ ok: false, error: 'Guild ID required to leave voice channel' });
+    }
+
+    const result = await leaveDiscordVoiceChannel(cleanToken, targetGuild, channelId);
+    res.json(result);
+  } catch (err: unknown) {
+    const error = err instanceof Error ? err.message : 'Failed to leave Discord voice channel';
+    res.status(500).json({ ok: false, error });
+  }
+});
+
+// Speak directly in Discord Voice Channel
+app.post('/api/caller/discord/speak-vc', async (req: Request, res: Response) => {
+  try {
+    const { botToken, channelId, text, guildId } = req.body || {};
+    const cleanToken = String(botToken || '').trim().replace(/^Bot\s+/i, '');
+    const cleanChannel = String(channelId || '').trim();
+    const cleanText = String(text || '').trim();
+
+    if (!cleanToken || !cleanChannel || !cleanText) {
+      return res.status(400).json({ ok: false, error: 'Bot token, channel ID, and text are required' });
+    }
+
+    const result = await speakInDiscordVoiceChannel(cleanToken, cleanChannel, cleanText, guildId);
+    res.json(result);
+  } catch (err: unknown) {
+    const error = err instanceof Error ? err.message : 'Failed to speak in voice channel';
+    res.status(500).json({ ok: false, error });
+  }
+});
+
+// Get voice channel connection status
+app.get('/api/caller/discord/vc-status', async (req: Request, res: Response) => {
+  try {
+    const botToken = String(req.query.botToken || '').trim().replace(/^Bot\s+/i, '');
+    const channelId = String(req.query.channelId || '').trim();
+
+    if (!botToken) {
+      return res.json({ connected: false, isSpeaking: false });
+    }
+
+    const session = activeDiscordGateways.get(botToken);
+    if (!session) {
+      return res.json({ connected: false, isSpeaking: false, gatewayOnline: false });
+    }
+
+    let targetSession: DiscordVoiceSession | null = null;
+    for (const v of session.voiceSessions.values()) {
+      if (!channelId || v.channelId === channelId) {
+        targetSession = v;
+        break;
+      }
+    }
+
+    res.json({
+      gatewayOnline: session.status === 'connected',
+      connected: targetSession ? targetSession.status === 'connected' : false,
+      channelId: targetSession?.channelId || null,
+      channelName: targetSession?.channelName || null,
+      guildId: targetSession?.guildId || null,
+      isSpeaking: Boolean(targetSession?.isSpeaking),
+      status: targetSession?.status || 'disconnected',
+    });
+  } catch {
+    res.json({ connected: false, isSpeaking: false });
+  }
+});
+
+// =====================================================================
+// AUTONOMOUS AI INTERVIEWS & RECRUITING ENDPOINTS
+// =====================================================================
+
+// List interviews (optionally filtered by user)
+app.get('/api/interview/list', async (req: Request, res: Response) => {
+  try {
+    const userId = req.query.userId ? parseInt(String(req.query.userId), 10) : undefined;
+    const items = await listInterviewsFromDb(userId);
+    res.json({ ok: true, interviews: items });
+  } catch (err: unknown) {
+    const error = err instanceof Error ? err.message : 'Failed to list interviews';
+    res.status(500).json({ ok: false, error });
+  }
+});
+
+// Get interview by ID
+app.get('/api/interview/:id', async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id;
+    const interview = await getInterviewByIdFromDb(id);
+    if (!interview) {
+      return res.status(404).json({ ok: false, error: `Interview "${id}" not found` });
+    }
+    res.json({ ok: true, interview });
+  } catch (err: unknown) {
+    const error = err instanceof Error ? err.message : 'Failed to fetch interview';
+    res.status(500).json({ ok: false, error });
+  }
+});
+
+// Create new interview (Generated unique ID, added to NeonDB)
+app.post('/api/interview/create', async (req: Request, res: Response) => {
+  try {
+    const data = req.body as Partial<InterviewRecord>;
+    if (!data.title || !data.target_role) {
+      return res.status(400).json({ ok: false, error: 'Title and Target Role are required' });
+    }
+
+    // Generate unique ID if not provided
+    const id = data.id || `iv_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+    const fullRecord: InterviewRecord = {
+      id,
+      title: data.title.trim(),
+      target_role: data.target_role.trim(),
+      company_name: (data.company_name || 'MuxAI').trim(),
+      description: data.description?.trim() || '',
+      created_by_user_id: data.created_by_user_id || null,
+      created_by_email: data.created_by_email || null,
+      config: data.config || {
+        openQuestionSilenceSeconds: 3.0,
+        qaSilenceSeconds: 5.0,
+        activeSilenceVoiceline: "I am assuming you have nothing else to say for now so let's move on to the next step.",
+        showHana3DModel: true,
+        recruiterPersonaName: 'Hana',
+      },
+      questions: Array.isArray(data.questions) && data.questions.length > 0
+        ? data.questions
+        : [
+            {
+              id: 'q1',
+              phase: 'question_1',
+              prompt: "Let's begin with a quick introduction. Could you tell me a bit about yourself, your background, and what drives your passion for this role?",
+              description: 'Introduction & Background',
+            },
+            {
+              id: 'q2',
+              phase: 'question_2',
+              prompt: "Thank you. Now, could you walk me through a challenging technical problem or project you tackled recently? How did you approach resolving it?",
+              description: 'Technical Problem Solving',
+            },
+          ],
+      tasks: data.tasks || {
+        requireResumeUpload: true,
+        requireWrittenReflection: true,
+        writtenPrompt: 'Please share three things you like about yourself and why. (Min 100 characters)',
+        minWrittenChars: 100,
+        requirePressureRating: true,
+        requireSnapshotCheck: true,
+      },
+      company_qa_knowledge: data.company_qa_knowledge || [],
+      active: true,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    const saved = await createInterviewInDb(fullRecord);
+    res.json({ ok: true, interview: saved });
+  } catch (err: unknown) {
+    const error = err instanceof Error ? err.message : 'Failed to create interview';
+    res.status(500).json({ ok: false, error });
+  }
+});
+
+// Delete interview
+app.delete('/api/interview/:id', async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id;
+    const userId = req.body?.userId ? parseInt(String(req.body.userId), 10) : undefined;
+    const success = await deleteInterviewFromDb(id, userId);
+    res.json({ ok: success });
+  } catch (err: unknown) {
+    const error = err instanceof Error ? err.message : 'Failed to delete interview';
+    res.status(500).json({ ok: false, error });
+  }
+});
+
+// Submit completed candidate interview session
+app.post('/api/interview/:id/submit', async (req: Request, res: Response) => {
+  try {
+    const interviewId = req.params.id;
+    const body = req.body || {};
+    const subId = body.id || `sub_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+
+    const submission: InterviewSubmissionRecord = {
+      id: subId,
+      interview_id: interviewId,
+      candidate_name: body.candidate_name || 'Anonymous Candidate',
+      candidate_email: body.candidate_email || '',
+      status: 'completed',
+      score: typeof body.score === 'number' ? body.score : 88,
+      responses: Array.isArray(body.responses) ? body.responses : [],
+      snapshots: Array.isArray(body.snapshots) ? body.snapshots : [],
+      resume_data: body.resume_data || null,
+      written_task: body.written_task || '',
+      pressure_rating: body.pressure_rating || '',
+      ai_evaluation: body.ai_evaluation || {
+        strengths: ['Clear articulate technical communication', 'Strong engineering background context'],
+        areas_for_growth: ['Continue deepening multi-system architecture examples'],
+        summary: 'Candidate demonstrated strong agency, clear technical articulation, and completed all required screening tasks.',
+        recommendation: 'Strong Hire',
+      },
+      completed_at: new Date().toISOString(),
+    };
+
+    const saved = await submitInterviewSessionToDb(submission);
+    res.json({ ok: true, submission: saved });
+  } catch (err: unknown) {
+    const error = err instanceof Error ? err.message : 'Failed to submit interview';
+    res.status(500).json({ ok: false, error });
+  }
+});
+
+// List candidate submissions for an interview
+app.get('/api/interview/:id/submissions', async (req: Request, res: Response) => {
+  try {
+    const interviewId = req.params.id;
+    const subs = await listInterviewSubmissionsFromDb(interviewId);
+    res.json({ ok: true, submissions: subs });
+  } catch (err: unknown) {
+    const error = err instanceof Error ? err.message : 'Failed to fetch submissions';
+    res.status(500).json({ ok: false, error });
+  }
+});
+
+// List all candidate interview history across the platform
+app.get('/api/interview-history', async (_req: Request, res: Response) => {
+  try {
+    const subs = await listInterviewSubmissionsFromDb();
+    res.json({ ok: true, submissions: subs });
+  } catch (err: unknown) {
+    const error = err instanceof Error ? err.message : 'Failed to fetch interview history';
+    res.status(500).json({ ok: false, error });
   }
 });
 

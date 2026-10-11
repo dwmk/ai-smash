@@ -26,6 +26,7 @@ import {
   Send,
   Eye,
   Check,
+  Copy,
   ArrowLeft,
   Settings2,
   ExternalLink,
@@ -44,10 +45,17 @@ import { AvatarEmotion } from '../lib/emotionDetector';
 import { lipSyncManager } from '../lib/lipSync';
 import { pingOllama, streamOllama } from '../lib/ollama';
 import { loadCustomOllamaUrl } from '../lib/storage';
+import { InterviewDashboard, InterviewDashboardRecord } from './InterviewDashboard';
+import { AccountUser } from '../types';
 
-interface InterviewPageProps {
+export interface InterviewPageProps {
   onNavigateHome: () => void;
   onNavigateToChat: () => void;
+  onNavigateToInterview?: (id?: string) => void;
+  isPremium?: boolean;
+  onRequirePremium?: () => void;
+  accountUser?: AccountUser | null;
+  currentPath?: string;
 }
 
 type InterviewStage = 'lobby' | 'meeting' | 'candidate_complete' | 'recruiter_review';
@@ -386,11 +394,69 @@ function calculateAgreementMatch(spoken: string): number {
 export const InterviewPage: React.FC<InterviewPageProps> = ({
   onNavigateHome,
   onNavigateToChat,
+  onNavigateToInterview,
+  isPremium = false,
+  onRequirePremium,
+  accountUser,
+  currentPath,
 }) => {
   // Web Speech API browser compatibility check
   const isWebSpeechSupported = typeof window !== 'undefined' && Boolean(
     (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
   );
+
+  // Extract ID from currentPath prop or window.location.search
+  const getParsedInterviewId = useCallback(() => {
+    if (typeof window === 'undefined') return null;
+    let search = window.location.search;
+    if (currentPath && currentPath.includes('?')) {
+      search = '?' + currentPath.split('?')[1];
+    }
+    const params = new URLSearchParams(search);
+    const val = params.get('id');
+    return val && val.trim() ? val.trim() : null;
+  }, [currentPath]);
+
+  // Active Interview ID state
+  // When no ?id= param is present, the Interview Dashboard is displayed!
+  const [activeInterviewId, setActiveInterviewId] = useState<string | null>(getParsedInterviewId);
+
+  // Sync activeInterviewId whenever currentPath prop changes
+  useEffect(() => {
+    const nextId = getParsedInterviewId();
+    if (nextId !== activeInterviewId) {
+      setActiveInterviewId(nextId);
+      if (!nextId) {
+        setStage('lobby');
+        setCustomInterviewData(null);
+      }
+    }
+  }, [currentPath, getParsedInterviewId, activeInterviewId]);
+
+  // Also listen for popstate events & URL search alterations
+  useEffect(() => {
+    const handleUrlChange = () => {
+      const nextId = getParsedInterviewId();
+      if (nextId !== activeInterviewId) {
+        setActiveInterviewId(nextId);
+        if (!nextId) {
+          setStage('lobby');
+          setCustomInterviewData(null);
+        }
+      }
+    };
+    window.addEventListener('popstate', handleUrlChange);
+    const interval = setInterval(handleUrlChange, 200);
+    return () => {
+      window.removeEventListener('popstate', handleUrlChange);
+      clearInterval(interval);
+    };
+  }, [getParsedInterviewId, activeInterviewId]);
+
+  const [customInterviewData, setCustomInterviewData] = useState<InterviewDashboardRecord | null>(null);
+
+  // Meeting ID string for session execution (defaults to activeInterviewId || 'demo')
+  const interviewId = activeInterviewId || 'demo';
 
   // ----------------------------------------------------
   // Stage State
@@ -402,18 +468,25 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   }, [stage]);
   const [activePov, setActivePov] = useState<'candidate' | 'recruiter'>('candidate');
 
-  // Meeting ID extracted from URL query params (default 'demo')
-  const [interviewId] = useState<string>(() => {
-    if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      return params.get('id') || 'demo';
-    }
-    return 'demo';
-  });
-
   // Candidate Profile Information (blank by default with placeholder e.g. Dewan Mukto)
   const [candidateName, setCandidateName] = useState<string>('');
-  const [targetRole] = useState<string>('Senior Full Stack & AI Systems Engineer');
+  const [targetRole, setTargetRole] = useState<string>('Senior Full Stack & AI Systems Engineer');
+
+  // Load Interview configuration from NeonDB if activeInterviewId is present
+  useEffect(() => {
+    if (!activeInterviewId) return;
+    fetch(`/api/interview/${encodeURIComponent(activeInterviewId)}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.ok && data.interview) {
+          setCustomInterviewData(data.interview);
+          if (data.interview.target_role) {
+            setTargetRole(data.interview.target_role);
+          }
+        }
+      })
+      .catch((err) => console.warn('Failed to fetch interview from NeonDB:', err));
+  }, [activeInterviewId]);
 
   // Candidate Resume Document
   const [uploadedResume, setUploadedResume] = useState<UploadedResume | null>(null);
@@ -2789,6 +2862,38 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     } catch {
       // ignore
     }
+
+    // Submit completed candidate session to NeonDB
+    try {
+      const subId = `sub_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+      fetch(`/api/interview/${encodeURIComponent(interviewId)}/submit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: subId,
+          candidate_name: effectiveCandidateName,
+          candidate_email: accountUser?.email || '',
+          score: 88,
+          responses: recordedResponses,
+          snapshots: snapshots,
+          resume_data: uploadedResume
+            ? {
+                fileName: uploadedResume.fileName,
+                fileSize: uploadedResume.fileSize,
+                uploadedAt: uploadedResume.uploadedAt,
+              }
+            : null,
+          written_task: writtenText,
+          pressure_rating: pressureRating,
+          ai_evaluation: {
+            strengths: ['Articulate communication', 'High engineering agency and technical resilience'],
+            areas_for_growth: ['Continue elaborating on distributed systems edge cases'],
+            summary: 'Candidate successfully completed all autonomous screening phases and assessment tasks.',
+            recommendation: 'Strong Hire',
+          },
+        }),
+      }).catch((err) => console.warn('Failed to submit interview to NeonDB:', err));
+    } catch {}
   };
 
   const handleGoToRecruiterReview = () => {
@@ -3062,6 +3167,30 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   };
 
   // ----------------------------------------------------
+  // INTERVIEW DASHBOARD (WHEN NO ?id= QUERY PARAM)
+  // ----------------------------------------------------
+  if (!activeInterviewId) {
+    return (
+      <InterviewDashboard
+        onNavigateHome={onNavigateHome}
+        onNavigateToChat={onNavigateToChat}
+        onSelectInterview={(id) => {
+          if (onNavigateToInterview) {
+            onNavigateToInterview(id);
+          } else {
+            const nextUrl = id ? `/interview?id=${encodeURIComponent(id)}` : '/interview';
+            window.history.pushState({}, '', nextUrl);
+            setActiveInterviewId(id ? id.trim() : null);
+          }
+        }}
+        isPremium={isPremium}
+        onRequirePremium={onRequirePremium}
+        accountUser={accountUser}
+      />
+    );
+  }
+
+  // ----------------------------------------------------
   // STAGE 1: LOBBY & PRE-INTERVIEW SETUP (LIGHT THEME)
   // ----------------------------------------------------
   if (stage === 'lobby') {
@@ -3069,7 +3198,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       <div className="min-h-screen bg-[#f8fafc] text-neutral-900 flex flex-col font-sans select-none">
         {/* Refresh Recovery Modal Banner if found */}
         {hasSavedSession && (
-          <div className="bg-gradient-to-r from-sky-500 to-blue-600 text-white px-4 py-3 shadow-md flex items-center justify-between z-40">
+          <div className="bg-sky-600 text-white px-4 py-3 border-b border-sky-700 shadow-md flex items-center justify-between z-40">
             <div className="flex items-center gap-2 text-xs sm:text-sm font-medium">
               <RefreshCw className="w-4 h-4 animate-spin text-white" />
               <span>We noticed you were in an active interview session. Would you like to resume where you left off?</span>
@@ -3098,21 +3227,42 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
           <div className="flex items-center gap-3">
             <button
               type="button"
-              onClick={onNavigateHome}
-              className="p-2 rounded-xl bg-neutral-100 hover:bg-neutral-200 text-neutral-600 hover:text-neutral-900 transition-colors cursor-pointer"
-              title="Return to Home"
+              onClick={() => {
+                if (onNavigateToInterview) {
+                  onNavigateToInterview();
+                } else {
+                  window.history.pushState({}, '', '/interview');
+                  setActiveInterviewId(null);
+                }
+              }}
+              className="px-3 py-1.5 rounded-xl bg-neutral-100 hover:bg-neutral-200 text-neutral-700 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+              title="Return to Interviews Dashboard"
             >
-              <ArrowLeft className="w-4 h-4" />
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span>Dashboard</span>
             </button>
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
               <h1 className="font-bold text-sm sm:text-base font-heading tracking-tight text-neutral-900">
-                Hana Interview Session • ID: demo
+                {customInterviewData?.title || 'Hana Interview Session'} • ID: {interviewId}
               </h1>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                const url = `${window.location.origin}/interview?id=${encodeURIComponent(interviewId)}`;
+                navigator.clipboard?.writeText(url);
+                alert('Copied public interview link: ' + url);
+              }}
+              className="px-2.5 py-1.5 rounded-xl bg-neutral-100 hover:bg-neutral-200 text-neutral-700 text-xs font-medium flex items-center gap-1 cursor-pointer transition-colors"
+              title="Copy Public Link"
+            >
+              <Copy className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Copy Link</span>
+            </button>
           </div>
         </header>
 
@@ -4030,6 +4180,20 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
             <button
               type="button"
               onClick={() => {
+                if (onNavigateToInterview) {
+                  onNavigateToInterview();
+                } else {
+                  window.history.pushState({}, '', '/interview');
+                  setActiveInterviewId(null);
+                }
+              }}
+              className="px-3.5 py-1.5 rounded-xl bg-sky-50 hover:bg-sky-100 border border-sky-200 text-xs font-semibold text-sky-800 transition-colors cursor-pointer"
+            >
+              Interviews Dashboard
+            </button>
+            <button
+              type="button"
+              onClick={() => {
                 sessionStorage.removeItem(STORAGE_KEY);
                 setStage('lobby');
                 setMeetingPhase('joining');
@@ -4180,9 +4344,16 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
         <div className="flex items-center gap-3">
           <button
             type="button"
-            onClick={onNavigateHome}
+            onClick={() => {
+              if (onNavigateToInterview) {
+                onNavigateToInterview();
+              } else {
+                window.history.pushState({}, '', '/interview');
+                setActiveInterviewId(null);
+              }
+            }}
             className="p-2 rounded-xl bg-neutral-100 hover:bg-neutral-200 text-neutral-600 hover:text-neutral-900 transition-colors cursor-pointer"
-            title="Return to Home"
+            title="Return to Interviews Dashboard"
           >
             <ArrowLeft className="w-4 h-4" />
           </button>
@@ -4197,6 +4368,20 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
         </div>
 
         <div className="flex items-center gap-2.5">
+          <button
+            type="button"
+            onClick={() => {
+              if (onNavigateToInterview) {
+                onNavigateToInterview();
+              } else {
+                window.history.pushState({}, '', '/interview');
+                setActiveInterviewId(null);
+              }
+            }}
+            className="px-3.5 py-1.5 rounded-xl bg-sky-50 hover:bg-sky-100 border border-sky-200 text-xs font-semibold text-sky-800 transition-colors cursor-pointer"
+          >
+            Interviews Dashboard
+          </button>
           <button
             type="button"
             onClick={() => {

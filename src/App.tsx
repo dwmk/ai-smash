@@ -99,6 +99,7 @@ import { VoiceTesterPage } from './components/VoiceTesterPage';
 import { MMDStudioPage } from './components/MMDStudioPage';
 import { InterviewPage } from './components/InterviewPage';
 import { CallerPage } from './components/CallerPage';
+import { TorGamePage } from './components/TorGamePage';
 import { PremiumModal } from './components/PremiumModal';
 import { IntegrationLibraryItem } from './constants';
 import { dispatchChatToWebhooks } from './lib/integrations';
@@ -142,10 +143,13 @@ export default function App() {
         return '/voice';
       }
       if (path.startsWith('/interview')) {
-        return path;
+        return window.location.pathname + window.location.search;
       }
       if (path.startsWith('/caller')) {
         return '/caller';
+      }
+      if (path.startsWith('/tor')) {
+        return '/tor';
       }
       return path.startsWith('/chat') ? '/chat' : '/';
     }
@@ -178,6 +182,10 @@ export default function App() {
         setCurrentRoute('/act');
         return;
       }
+      if (path.startsWith('/tor')) {
+        setCurrentRoute('/tor');
+        return;
+      }
       if (path.startsWith('/mmd')) {
         setCurrentRoute('/mmd');
         return;
@@ -187,7 +195,7 @@ export default function App() {
         return;
       }
       if (path.startsWith('/interview')) {
-        setCurrentRoute(path);
+        setCurrentRoute(window.location.pathname + window.location.search);
         return;
       }
       if (path.startsWith('/caller')) {
@@ -199,6 +207,20 @@ export default function App() {
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
+
+  // Sync /interview route query params if URL search changes
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const interval = setInterval(() => {
+      if (window.location.pathname.startsWith('/interview')) {
+        const full = window.location.pathname + window.location.search;
+        if (currentRoute !== full) {
+          setCurrentRoute(full);
+        }
+      }
+    }, 200);
+    return () => clearInterval(interval);
+  }, [currentRoute]);
 
   const navigateTo = (path: string) => {
     if (typeof window !== 'undefined') {
@@ -216,6 +238,8 @@ export default function App() {
         normalized = path;
       } else if (path.startsWith('/act')) {
         normalized = '/act';
+      } else if (path.startsWith('/tor')) {
+        normalized = '/tor';
       } else if (path.startsWith('/mmd')) {
         normalized = '/mmd';
       } else if (path.startsWith('/voice')) {
@@ -2150,6 +2174,20 @@ export default function App() {
     );
   }
 
+  // Render Secret Combat Testbed & Torment Game at '/tor'
+  if (currentRoute.startsWith('/tor')) {
+    return (
+      <>
+        {shockwaveOverlay}
+        <TorGamePage
+          onBackToChat={() => navigateTo('/chat')}
+          onNavigateHome={() => navigateTo('/')}
+          onNavigateToAct={() => navigateTo('/act')}
+        />
+      </>
+    );
+  }
+
   // Render MMD Studio Stage at '/mmd'
   if (currentRoute.startsWith('/mmd')) {
     return (
@@ -2183,8 +2221,13 @@ export default function App() {
       <>
         {shockwaveOverlay}
         <InterviewPage
+          currentPath={currentRoute}
           onNavigateHome={() => navigateTo('/')}
           onNavigateToChat={() => navigateTo('/chat')}
+          onNavigateToInterview={(id) => navigateTo(id ? `/interview?id=${id}` : '/interview')}
+          isPremium={isPremium}
+          onRequirePremium={() => setIsPremiumModalOpen(true)}
+          accountUser={accountUser}
         />
       </>
     );
@@ -2236,7 +2279,7 @@ export default function App() {
           onStartChat={() => navigateTo('/chat')}
           onNavigateToDocs={(p) => navigateTo(p || '/docs')}
           onNavigateToHumanizer={() => navigateTo('/humanizer')}
-          onNavigateToInterview={(p) => navigateTo(p || '/interview?id=demo')}
+          onNavigateToInterview={(p) => navigateTo(p || '/interview')}
           onNavigateToCaller={() => navigateTo('/caller')}
         />
       </>
