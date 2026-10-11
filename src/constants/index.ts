@@ -639,7 +639,7 @@ export const AI_PROFILE = {
   ],
   vrmModelUrl: 'https://muxai.vercel.app/hana_v1.3_vrm1.vrm',
   socials: {
-    instagram: 'https://instagram.com/hana_mux',
+    instagram: 'https://instagram.com/hana.intelligence',
     discord: 'https://discord.gg/GRRHsFqHrK',
     github: 'https://github.com/muxai/hana.ai',
   },
