@@ -74,6 +74,21 @@ export const AVAILABLE_MODELS: ModelSpec[] = [
     ramRequired: '~2.2 GB',
   },
   {
+    id: 'hana-fast',
+    name: 'Fast Brain',
+    tagline: 'Hana-native SLM',
+    family: 'browser-slm',
+    hfRepo: 'dwmk/Hana-0.1-Fast',
+    sizeLabel: '??? MB',
+    approxParams: '8B',
+    defaultDtype: 'q3f16',
+    isSmallModel: true,
+    description: 'Hana Fast (8.000 B)',
+    speedRating: 'Fast',
+    isDefault: true,
+    ramRequired: '??? MB',
+  },
+  {
     id: 'muxai-ollama',
     name: 'MuxAI Brain',
     tagline: 'Cloud Ollama Server',
@@ -248,7 +263,7 @@ export const AVAILABLE_MODELS: ModelSpec[] = [
   },
 ];
 
-export const DEFAULT_MODEL_ID = 'smollm2-135m';
+export const DEFAULT_MODEL_ID = 'hana-fast';
 
 export function getModelById(id: string): ModelSpec {
   return AVAILABLE_MODELS.find((m) => m.id === id) || AVAILABLE_MODELS[0];

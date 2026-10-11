@@ -1550,7 +1550,7 @@ export default function App() {
         // auto-switch to smollm2 135 model and show notification for 6 seconds
         const currentModel = activeModelRef.current;
         if (currentModel.id === 'muxai-ollama' && !muxRes.online) {
-          const smollmSpec = getModelById('smollm2-135m');
+          const smollmSpec = getModelById('hana-fast');
           setActiveModel(smollmSpec);
           setTelemetry((prev) => ({
             ...prev,
@@ -1561,7 +1561,7 @@ export default function App() {
           }));
           triggerFallbackNotice(currentModel.name);
         } else if (currentModel.id === 'self-hosted-ollama' && !customRes.online) {
-          const smollmSpec = getModelById('smollm2-135m');
+          const smollmSpec = getModelById('hana-fast');
           setActiveModel(smollmSpec);
           setTelemetry((prev) => ({
             ...prev,
@@ -1992,7 +1992,7 @@ export default function App() {
 
       const isOllama = activeModel.family === 'ollama';
       if (isOllama) {
-        const smollmSpec = getModelById('smollm2-135m');
+        const smollmSpec = getModelById('hana-fast');
         setActiveModel(smollmSpec);
         setTelemetry((prev) => ({
           ...prev,

@@ -198,7 +198,7 @@ CREATE TABLE IF NOT EXISTS conversations (
   id TEXT PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   title TEXT NOT NULL DEFAULT 'Direct Message',
-  model_id TEXT DEFAULT 'smollm2-135m',
+  model_id TEXT DEFAULT 'hana-fast',
   pinned BOOLEAN NOT NULL DEFAULT FALSE,
   created_at BIGINT NOT NULL,
   updated_at BIGINT NOT NULL
@@ -684,7 +684,7 @@ async function syncUserConversationsAndThemes(params) {
               conv.id,
               params.userId,
               conv.title || 'Direct Message',
-              conv.modelId || 'smollm2-135m',
+              conv.modelId || 'hana-fast',
               Boolean(conv.pinned),
               Number(conv.createdAt) || Date.now(),
               Number(conv.updatedAt) || Date.now(),
