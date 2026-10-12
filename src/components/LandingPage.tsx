@@ -10,6 +10,9 @@ import {
   Palette,
   Github,
   Linkedin,
+  Facebook,
+  Instagram,
+  Twitter,
   ExternalLink,
   Heart,
   Award,
@@ -1333,9 +1336,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
       {/* FOOTER */}
       <footer className="relative z-20 border-t border-black/[0.08] bg-white py-12 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-6">
+        <div className="max-w-7xl mx-auto flex flex-col items-center justify-center gap-5 text-center">
           {/* Company branding */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center justify-center gap-3">
             <a
               href="https://mux8.com"
               target="_blank"
@@ -1346,8 +1349,41 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             </a>
           </div>
 
-          {/* Social Links */}
-          <div className="flex items-center gap-5 text-sm text-neutral-600">
+          {/* Social Links (Horizontally centered on mobile and desktop) */}
+          <div className="flex flex-wrap items-center justify-center gap-4 sm:gap-6 text-sm text-neutral-600">
+            <a
+              href="https://facebook.com/hana.intelligence"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 hover:text-neutral-900 font-medium transition-colors"
+              title="Hana Intelligence on Facebook"
+            >
+              <Facebook className="w-4 h-4 text-[#1877f2]" />
+              <span>Facebook</span>
+            </a>
+
+            <a
+              href="https://instagram.com/hana.intelligence"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 hover:text-neutral-900 font-medium transition-colors"
+              title="Hana Intelligence on Instagram"
+            >
+              <Instagram className="w-4 h-4 text-[#e4405f]" />
+              <span>Instagram</span>
+            </a>
+
+            <a
+              href="https://x.com/hanainteligence"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 hover:text-neutral-900 font-medium transition-colors"
+              title="Hana Intelligence on X / Twitter"
+            >
+              <Twitter className="w-4 h-4 text-neutral-900" />
+              <span>X / Twitter</span>
+            </a>
+
             <a
               href="https://www.linkedin.com/company/huanmux"
               target="_blank"
@@ -1372,8 +1408,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           </div>
 
           {/* Copyright notice */}
-          <div className="text-xs text-neutral-400 font-mono">
-            &copy; {new Date().getFullYear()}{' '}
+          <div className="text-xs text-neutral-400 font-mono text-center">
+            &copy; 2026{' '}
             <a
               href="https://mux8.com"
               target="_blank"
@@ -1382,7 +1418,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             >
               MuxAI
             </a>
-            . All rights reserved.
+            . Hana Intelligence.
           </div>
         </div>
       </footer>

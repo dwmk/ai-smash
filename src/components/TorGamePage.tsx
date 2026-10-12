@@ -23,7 +23,10 @@ import {
   ALL_WARDROBE_OUTFITS,
   MODEL_SOURCE_DOMAIN,
   MODEL_FALLBACK_DOMAIN,
+  getOutfitById,
+  VOICE_CONFIG,
 } from '../constants';
+import { waitForPersonaVoice } from '../lib/audio';
 import { WardrobeOutfit } from '../types';
 
 // ============================================================================
@@ -136,8 +139,44 @@ export interface BloodParticle {
   color: THREE.Color;
 }
 
-// Player Default Outfit
-const PLAYER_OUTFIT: WardrobeOutfit = ALL_WARDROBE_OUTFITS.find((o) => o.id === 'pain-giver') || ALL_WARDROBE_OUTFITS[0];
+// Player Mode Outfits
+const OUTFIT_PAIN_GIVER: WardrobeOutfit =
+  ALL_WARDROBE_OUTFITS.find((o) => o.fileName === 'hana_v1.2_darkpain_vrm1.vrm') ||
+  getOutfitById('pain-giver') || {
+    id: 'pain-giver',
+    name: 'Dominant Top',
+    fileName: 'hana_v1.2_darkpain_vrm1.vrm',
+    modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.2_darkpain_vrm1.vrm`,
+    fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.2_darkpain_vrm1.vrm`,
+    isPremium: false,
+    isSecret: true,
+  };
+
+const OUTFIT_PAIN_TAKER: WardrobeOutfit =
+  ALL_WARDROBE_OUTFITS.find((o) => o.fileName === 'hana_v1.2_darkslave_vrm1.vrm') ||
+  getOutfitById('pain-taker') || {
+    id: 'pain-taker',
+    name: 'Submissive Bottom',
+    fileName: 'hana_v1.2_darkslave_vrm1.vrm',
+    modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.2_darkslave_vrm1.vrm`,
+    fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.2_darkslave_vrm1.vrm`,
+    isPremium: false,
+    isSecret: true,
+  };
+
+const OUTFIT_BASE_HANA: WardrobeOutfit =
+  ALL_WARDROBE_OUTFITS.find((o) => o.fileName === 'hana_v1.0_base_vrm1.vrm') ||
+  getOutfitById('base') || {
+    id: 'base',
+    name: 'All Natural Base',
+    fileName: 'hana_v1.0_base_vrm1.vrm',
+    modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.0_base_vrm1.vrm`,
+    fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.0_base_vrm1.vrm`,
+    isPremium: false,
+    isSecret: true,
+  };
+
+const PLAYER_OUTFIT: WardrobeOutfit = OUTFIT_PAIN_GIVER;
 
 // Blood liquid colors
 const BLOOD_COLORS: Record<BloodStyle, { base: number; drip: number; mist: number; name: string }> = {
