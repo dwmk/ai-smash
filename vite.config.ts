@@ -24,5 +24,18 @@ export default defineConfig(() => {
       // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
     },
+    build: {
+    chunkSizeWarningLimit: 1000, // Raises the warning limit to 1000 kB
+    rolldownOptions: {
+      output: {
+        manualChunks(id) {
+          // Splits node_modules dependencies into their own chunks
+          if (id.includes('node_modules')) {
+            return id.toString().split('node_modules/')[1].split('/')[0].toString();
+          }
+        }
+      }
+    }
+  }
   };
 });
