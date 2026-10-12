@@ -1204,6 +1204,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                     'Connect custom local Ollama / vLLM servers',
                     'Connect with APIs and integrations',
                     'Sync account data, settings with cloud storage',
+                    'Create and review automated interviews',
+                    'Access the full Hana ecosystem',
                     'Enhanced customer support',
                     'Early access to new features',
                   ].map((feat, idx) => (
@@ -1211,7 +1213,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                       <div className="w-5 h-5 rounded-full bg-[#55d2f6]/25 text-[#0a7a9e] flex items-center justify-center shrink-0 mt-0.5">
                         <Check className="w-3 h-3 stroke-[3]" />
                       </div>
-                      <span className={idx === 2 || idx === 3 || idx === 7 ? 'font-medium text-neutral-950' : ''}>
+                      <span className={idx === 2 || idx === 3 || idx === 7 || idx === 8 || idx === 9 ? 'font-medium text-neutral-950' : ''}>
                         {feat}
                       </span>
                     </div>

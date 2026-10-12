@@ -18,6 +18,8 @@ export const PremiumModal: React.FC<PremiumModalProps> = ({ isOpen, onClose }) =
     'In-browser on-device SLM execution (WebGPU/Wasm)',
     'Connect custom local Ollama / vLLM servers',
     'Connect with APIs and integrations',
+    'Create and review automated interviews',
+    'Access the full Hana ecosystem',
     'Sync account data, settings with cloud storage',
     'Enhanced customer support',
     'Early access to new features',

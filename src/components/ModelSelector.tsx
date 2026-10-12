@@ -204,7 +204,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
 
         <span className="font-medium tracking-tight truncate max-w-[120px] sm:max-w-[160px]">
           {activeModel.family === 'api-provider' && (activeModel.customModel || providerModels[activeModel.providerId || 'openai'])
-            ? `${activeModel.name} (${activeModel.customModel || providerModels[activeModel.providerId || 'openai']})`
+            ? `${activeModel.name}`
             : activeModel.name}
         </span>
 
