@@ -476,9 +476,16 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   useEffect(() => {
     if (!activeInterviewId) return;
     fetch(`/api/interview/${encodeURIComponent(activeInterviewId)}`)
-      .then((r) => r.json())
+      .then(async (r) => {
+        try {
+          const text = await r.text();
+          return text ? JSON.parse(text) : null;
+        } catch {
+          return null;
+        }
+      })
       .then((data) => {
-        if (data.ok && data.interview) {
+        if (data && data.ok && data.interview) {
           setCustomInterviewData(data.interview);
           if (data.interview.target_role) {
             setTargetRole(data.interview.target_role);
