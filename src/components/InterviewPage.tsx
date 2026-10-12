@@ -154,8 +154,8 @@ const TRANSITION_VOICELINES = {
     "Let's start with an introduction. Tell me about your journey so far, your core strengths, and what motivates you in this field.",
   ],
   question2Intro: [
-    "Thank you. Now, could you walk me through a challenging technical problem or project you tackled recently? How did you approach resolving it?",
-    "Great context. Next, could you share a complex engineering challenge you faced recently and the steps you took to solve it?",
+    "Now, could you walk me through a challenging technical problem or project you tackled recently? How did you approach resolving it?",
+    "Next, could you share a complex engineering challenge you faced recently and the steps you took to solve it?",
     "I appreciate that overview. For our second question, tell me about a tough technical obstacle or system problem you debugged and how you brought it to resolution.",
   ],
   taskResumeIntro: [
@@ -164,8 +164,8 @@ const TRANSITION_VOICELINES = {
     "Let's transition to our first interactive task. In the panel I just opened, please upload your latest resume or CV document.",
   ],
   taskResumeDone: [
-    "Thank you! I've received your updated document. Now let's move forward to the written reflection task.",
-    "Awesome, your resume is securely attached to your profile. Let's switch the panel over to the written reflection exercise.",
+    "I've received your updated document. Now let's move forward to the written reflection task.",
+    "Your resume is securely attached to your profile. Let's switch the panel over to the written reflection exercise.",
     "Got your document on file! Let's transition to the next task on your screen: a short written reflection.",
   ],
   taskWrittenIntro: [
@@ -179,17 +179,17 @@ const TRANSITION_VOICELINES = {
     "Great insights—I have logged your written response. Let's bring up the situational pressure assessment next.",
   ],
   taskPressureIntro: [
-    "Great. Now we have a quick situational question. In the spotlight panel, select the rating that most accurately reflects how you perform under intense project pressure.",
+    "Now we have a quick situational question. In the spotlight panel, select the rating that most accurately reflects how you perform under intense project pressure.",
     "Next up is a quick situational check. Looking at the options in the task panel, choose the statement that best matches how you handle high-pressure deadlines.",
     "I've switched the panel to our situational behavior check. Please pick the option that most honestly describes how you operate under project pressure.",
   ],
   taskPressureDone: [
-    "Noted! Next up, we will do a fast visual verification sequence.",
-    "Got your selection recorded! Now let's switch the panel to our final interactive step: visual identity verification.",
-    "Thank you, I've logged that rating. Let's pull up the camera verification panel for three quick angle snapshots.",
+    "Next up, we will do a fast visual verification sequence.",
+    "Now let's switch the panel to our final interactive step: visual identity verification.",
+    "Let's pull up the camera verification panel for three quick angle snapshots.",
   ],
   taskSnapshotIntro: [
-    "For fun and identity verification, please write down your phone number on a small piece of paper. First, hold it up and look directly forward, then say 'click' or 'ready' when you're set.",
+    "For identity verification, please write down your phone number on a small piece of paper. First, hold it up and look directly forward, then say 'click' or 'ready' when you're set.",
     "Here is our visual liveness check. Please hold up a small piece of paper with your phone number or test digits, face forward, and say 'click' or 'ready' to snap the first photo.",
     "Let's complete our multi-angle verification. Hold up your paper note, look straight ahead at the camera, and say 'click' whenever you are ready.",
   ],

@@ -391,7 +391,7 @@ export const InterviewDashboard: React.FC<InterviewDashboardProps> = ({
 
   const handleCreateClick = () => {
     if (!isPremium) {
-      setUpgradeFeatureName('Interview Designer Studio & NeonDB Publishing');
+      setUpgradeFeatureName('Interview Designer Studio');
       setShowUpgradeModal(true);
       return;
     }
@@ -401,7 +401,7 @@ export const InterviewDashboard: React.FC<InterviewDashboardProps> = ({
     setDesignerTitle('');
     setDesignerRole('');
     setDesignerCompany(accountUser?.username ? `${accountUser.username} Labs` : 'MuxAI');
-    setDesignerDescription('Autonomous screening with Hana evaluating background, technical architecture, and problem solving.');
+    setDesignerDescription('Autonomous screening with Hana');
     setShowDesignerModal(true);
   };
 
@@ -585,10 +585,10 @@ export const InterviewDashboard: React.FC<InterviewDashboardProps> = ({
               </div>
               <div>
                 <h1 className="font-bold text-sm sm:text-base font-heading tracking-tight text-neutral-900 leading-tight">
-                  Hana AI Autonomous Interviews
+                  AI Interviews
                 </h1>
                 <p className="text-[11px] text-neutral-500 hidden sm:block">
-                  Recruiter Studio, Persistent NeonDB Storage &amp; Candidate History
+                  Automated interactive video interviews with the Hana ecosystem
                 </p>
               </div>
             </div>
@@ -632,13 +632,13 @@ export const InterviewDashboard: React.FC<InterviewDashboardProps> = ({
           <div className="relative z-10 max-w-2xl space-y-3">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 backdrop-blur-md border border-white/15 text-[11px] font-semibold text-sky-300">
               <Sparkles className="w-3 h-3" />
-              <span>Autonomous Screening &amp; Verification</span>
+              <span>HR Automation</span>
             </div>
             <h2 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold font-heading tracking-tight leading-tight">
-              Design AI Interviews &amp; Inspect Live Candidate Dossiers
+               Verify candidates without stressing your HR team
             </h2>
             <p className="text-xs sm:text-sm text-neutral-300 leading-relaxed">
-              Create customized screening scenarios with Hana. Generate persistent IDs stored in NeonDB, share public candidate links, and evaluate responses, resumes, written reflections, and identity verification snapshots.
+              Create customized screening scenarios with Hana. Simply set up questions based on your recruiting role, share the public candidate links, and evaluate responses, resumes, written reflections, and ID verification snapshots with ease.
             </p>
 
             <div className="pt-2 flex items-center gap-3 flex-wrap">

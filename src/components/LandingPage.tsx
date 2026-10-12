@@ -1340,12 +1340,12 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           {/* Company branding */}
           <div className="flex items-center justify-center gap-3">
             <a
-              href="https://mux8.com"
+              href="#"
               target="_blank"
               rel="noopener noreferrer"
               className="font-bold text-lg tracking-tight font-heading text-neutral-900 hover:text-[var(--theme-accent,#0f9bc7)] transition-colors"
             >
-              MuxAI
+              Hana
             </a>
           </div>
 
@@ -1356,7 +1356,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 hover:text-neutral-900 font-medium transition-colors"
-              title="Hana Intelligence on Facebook"
+              title="Hana on Facebook"
             >
               <Facebook className="w-4 h-4 text-[#1877f2]" />
               <span>Facebook</span>
@@ -1367,7 +1367,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 hover:text-neutral-900 font-medium transition-colors"
-              title="Hana Intelligence on Instagram"
+              title="Hana on Instagram"
             >
               <Instagram className="w-4 h-4 text-[#e4405f]" />
               <span>Instagram</span>
@@ -1378,7 +1378,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 hover:text-neutral-900 font-medium transition-colors"
-              title="Hana Intelligence on X / Twitter"
+              title="Hana on X / Twitter"
             >
               <Twitter className="w-4 h-4 text-neutral-900" />
               <span>X / Twitter</span>
@@ -1411,7 +1411,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           <div className="text-xs text-neutral-400 font-mono text-center">
             &copy; 2026{' '}
             <a
-              href="https://mux8.com"
+              href="https://ai.mux8.com"
               target="_blank"
               rel="noopener noreferrer"
               className="hover:text-neutral-700 hover:underline transition-colors"
