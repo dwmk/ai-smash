@@ -36,13 +36,13 @@
 @layer base {
   html {
     scroll-behavior: smooth;
-    cursor: url("http://huanmux.github.io/assets/image/diamond-cursor.cur"), url("https://huanmux.github.io/assets/image/diamond-cursor.cur"), auto;
+    cursor: url("https://huanmux.github.io/assets/image/diamond-cursor.cur"), auto;
   }
   body {
     font-family: 'Encode Sans Expanded', system-ui, -apple-system, sans-serif;
     background-color: var(--theme-bg, #f8f9fc);
     color: var(--theme-text, #1e2029);
-    cursor: url("http://huanmux.github.io/assets/image/diamond-cursor.cur"), url("https://huanmux.github.io/assets/image/diamond-cursor.cur"), auto;
+    cursor: url("https://huanmux.github.io/assets/image/diamond-cursor.cur"), auto;
   }
   .dark body, html.dark body {
     background-color: var(--theme-bg);

@@ -27,6 +27,10 @@ import {
   Clock,
   ChevronRight,
   Bot,
+  Sliders,
+  Settings2,
+  Volume2,
+  Video,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { AccountUser } from '../types';
@@ -115,6 +119,118 @@ interface InterviewDashboardProps {
   accountUser?: AccountUser | null;
 }
 
+export const PRESET_QUESTION_PACKAGES = [
+  {
+    name: 'Full Stack & AI Systems',
+    role: 'Senior Full Stack & AI Systems Engineer',
+    description: 'Comprehensive screening covering engineering background, technical problem solving, and real-time systems.',
+    questions: [
+      {
+        id: 'q1',
+        phase: 'question_1',
+        prompt: "Let's begin with a quick introduction. Could you tell me a bit about yourself, your background, and what drives your passion for this role?",
+        description: 'Introduction & Background',
+      },
+      {
+        id: 'q2',
+        phase: 'question_2',
+        prompt: "Thank you. Now, could you walk me through a challenging technical problem or project you tackled recently? How did you approach resolving it?",
+        description: 'Technical Problem Solving',
+      },
+      {
+        id: 'q3',
+        phase: 'question_3',
+        prompt: "How do you design scalable real-time systems that bridge browser WebGL or WebGPU inference with self-hosted backend nodes?",
+        description: 'Real-time System Architecture',
+      },
+    ],
+  },
+  {
+    name: 'Distributed Backend & Cloud',
+    role: 'Staff Distributed Backend Engineer',
+    description: 'Focuses on microservices, event streaming idempotency, and database performance bottlenecks.',
+    questions: [
+      {
+        id: 'q1',
+        phase: 'question_1',
+        prompt: "Could you walk me through your journey with distributed systems and the most complex backend service you have designed?",
+        description: 'Distributed Background',
+      },
+      {
+        id: 'q2',
+        phase: 'question_2',
+        prompt: "In an event-driven architecture with Kafka or message queues, how do you guarantee idempotent message processing and prevent cascading failures?",
+        description: 'Event-Driven Idempotency',
+      },
+      {
+        id: 'q3',
+        phase: 'question_3',
+        prompt: "Tell me about a time you diagnosed and resolved a high-concurrency database bottleneck or latency spike in production.",
+        description: 'High-Concurrency Database Optimization',
+      },
+    ],
+  },
+  {
+    name: 'Frontend Architect & 3D UI',
+    role: 'Lead Frontend & 3D Interactive Engineer',
+    description: 'Assesses modern React performance, WebGL shader optimization, and responsive design systems.',
+    questions: [
+      {
+        id: 'q1',
+        phase: 'question_1',
+        prompt: "Tell me about yourself and your experience building high-performance modern web applications and interactive canvas interfaces.",
+        description: 'Frontend Background',
+      },
+      {
+        id: 'q2',
+        phase: 'question_2',
+        prompt: "How do you maintain a smooth 60 frames per second render loop in Three.js or WebGL while managing heavy state and assets in React?",
+        description: '60fps WebGL Optimization',
+      },
+      {
+        id: 'q3',
+        phase: 'question_3',
+        prompt: "Describe how you approach building accessible, resilient design systems and eliminating UI slop across device form factors.",
+        description: 'Design Systems & Accessibility',
+      },
+    ],
+  },
+  {
+    name: 'AI/ML & LLM Platform',
+    role: 'Senior Machine Learning & Inference Platform Engineer',
+    description: 'Evaluates experience with model serving, RAG architectures, small language models, and latency trade-offs.',
+    questions: [
+      {
+        id: 'q1',
+        phase: 'question_1',
+        prompt: "Could you introduce yourself and describe your hands-on experience deploying and serving LLMs and small language models in production?",
+        description: 'LLM Platform Background',
+      },
+      {
+        id: 'q2',
+        phase: 'question_2',
+        prompt: "What are the core trade-offs you evaluate when deciding between fine-tuning, retrieval-augmented generation (RAG), and prompt engineering for enterprise use cases?",
+        description: 'RAG vs Fine-tuning Architecture',
+      },
+      {
+        id: 'q3',
+        phase: 'question_3',
+        prompt: "How do you minimize time-to-first-token latency and manage GPU memory constraints during peak traffic spikes?",
+        description: 'Low-latency Inference & Memory',
+      },
+    ],
+  },
+];
+
+export const PRESET_SILENCE_VOICELINES = [
+  "I am assuming you have nothing else to say for now so let's move on to the next step.",
+  "Thank you for sharing that context. Let's move on to the next step.",
+  "Got it, that gives me good context. Let's continue forward.",
+  "Understood. That covers this part well, let's proceed to the next step.",
+  "Appreciated! I have noted your response in the dossier. Moving right along.",
+  "Wonderful, thank you for walking me through that. Let's move forward to the next part.",
+];
+
 export const InterviewDashboard: React.FC<InterviewDashboardProps> = ({
   onNavigateHome,
   onNavigateToChat,
@@ -137,7 +253,7 @@ export const InterviewDashboard: React.FC<InterviewDashboardProps> = ({
 
   // Interview Designer Modal State (Premium Feature)
   const [showDesignerModal, setShowDesignerModal] = useState<boolean>(false);
-  const [designerStep, setDesignerStep] = useState<1 | 2 | 3 | 4>(1);
+  const [designerStep, setDesignerStep] = useState<1 | 2 | 3 | 4 | 5>(1);
   const [isSavingInterview, setIsSavingInterview] = useState<boolean>(false);
   const [publishedInterview, setPublishedInterview] = useState<InterviewDashboardRecord | null>(null);
 
@@ -157,6 +273,9 @@ export const InterviewDashboard: React.FC<InterviewDashboardProps> = ({
   const [designerOpenSilenceSec, setDesignerOpenSilenceSec] = useState<number>(3.0);
   const [designerQaSilenceSec, setDesignerQaSilenceSec] = useState<number>(5.0);
   const [designerShow3D, setDesignerShow3D] = useState<boolean>(true);
+  const [designerSilenceVoiceline, setDesignerSilenceVoiceline] = useState<string>(
+    "I am assuming you have nothing else to say for now so let's move on to the next step."
+  );
   const [designerQuestions, setDesignerQuestions] = useState<
     Array<{ id: string; phase: string; prompt: string; description: string }>
   >([
@@ -178,7 +297,7 @@ export const InterviewDashboard: React.FC<InterviewDashboardProps> = ({
   const [selectedSubmission, setSelectedSubmission] = useState<InterviewSubmissionItem | null>(null);
   const [zoomedSnapshot, setZoomedSnapshot] = useState<string | null>(null);
 
-  // Fetch Interviews List from NeonDB
+  // Fetch Interviews List from NeonDB with LocalStorage Fallback Merge
   const fetchInterviews = async () => {
     setLoadingInterviews(true);
     try {
@@ -190,11 +309,41 @@ export const InterviewDashboard: React.FC<InterviewDashboardProps> = ({
       } catch {
         console.warn('Non-JSON response received for interview list');
       }
+      let serverList: InterviewDashboardRecord[] = [];
       if (data && data.ok && Array.isArray(data.interviews)) {
-        setInterviews(data.interviews);
+        serverList = data.interviews;
       }
+
+      // Merge with custom interviews stored in browser localStorage
+      try {
+        const stored = localStorage.getItem('hana_custom_interviews');
+        if (stored) {
+          const localList = JSON.parse(stored);
+          if (Array.isArray(localList)) {
+            const merged = [...serverList];
+            for (const item of localList) {
+              if (item && item.id && !merged.some((i) => i.id === item.id)) {
+                merged.push(item);
+              }
+            }
+            setInterviews(merged);
+            return;
+          }
+        }
+      } catch {}
+
+      setInterviews(serverList);
     } catch (err) {
       console.warn('Failed to fetch interviews:', err);
+      try {
+        const stored = localStorage.getItem('hana_custom_interviews');
+        if (stored) {
+          const localList = JSON.parse(stored);
+          if (Array.isArray(localList)) {
+            setInterviews(localList);
+          }
+        }
+      } catch {}
     } finally {
       setLoadingInterviews(false);
     }
@@ -337,7 +486,7 @@ export const InterviewDashboard: React.FC<InterviewDashboardProps> = ({
         config: {
           openQuestionSilenceSeconds: designerOpenSilenceSec,
           qaSilenceSeconds: designerQaSilenceSec,
-          activeSilenceVoiceline: "I am assuming you have nothing else to say for now so let's move on to the next step.",
+          activeSilenceVoiceline: designerSilenceVoiceline || "I am assuming you have nothing else to say for now so let's move on to the next step.",
           showHana3DModel: designerShow3D,
           recruiterPersonaName: 'Hana',
         },
@@ -371,38 +520,33 @@ export const InterviewDashboard: React.FC<InterviewDashboardProps> = ({
         console.warn('Server returned non-JSON response for interview creation');
       }
 
-      if (data && data.ok && data.interview) {
-        setPublishedInterview(data.interview);
-        setInterviews((prev) => [data.interview, ...prev.filter((i) => i.id !== data.interview.id)]);
-        setDesignerStep(4);
-        try {
-          confetti({
-            particleCount: 80,
-            spread: 70,
-            origin: { y: 0.6 },
-          });
-        } catch {}
-      } else if (payload.id && payload.title) {
-        // Fallback local persistence ensuring user is never blocked
-        const fallbackRecord: InterviewDashboardRecord = {
-          ...(payload as InterviewDashboardRecord),
-          active: true,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        };
-        setPublishedInterview(fallbackRecord);
-        setInterviews((prev) => [fallbackRecord, ...prev.filter((i) => i.id !== fallbackRecord.id)]);
-        setDesignerStep(4);
-        try {
-          confetti({
-            particleCount: 80,
-            spread: 70,
-            origin: { y: 0.6 },
-          });
-        } catch {}
-      } else {
-        alert(data?.error || 'Failed to save interview');
-      }
+      const finalRecord: InterviewDashboardRecord = (data && data.ok && data.interview)
+        ? data.interview
+        : {
+            ...(payload as InterviewDashboardRecord),
+            active: true,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          };
+
+      // Save to localStorage so custom interview is immediately available across tabs & restarts
+      try {
+        const stored = localStorage.getItem('hana_custom_interviews');
+        const list = stored ? JSON.parse(stored) : [];
+        const filtered = Array.isArray(list) ? list.filter((i: any) => i.id !== finalRecord.id) : [];
+        localStorage.setItem('hana_custom_interviews', JSON.stringify([finalRecord, ...filtered]));
+      } catch {}
+
+      setPublishedInterview(finalRecord);
+      setInterviews((prev) => [finalRecord, ...prev.filter((i) => i.id !== finalRecord.id)]);
+      setDesignerStep(5);
+      try {
+        confetti({
+          particleCount: 80,
+          spread: 70,
+          origin: { y: 0.6 },
+        });
+      } catch {}
     } catch (err: any) {
       alert(err.message || 'Error publishing interview');
     } finally {
@@ -1066,7 +1210,7 @@ export const InterviewDashboard: React.FC<InterviewDashboardProps> = ({
                     Interview Designer Studio
                   </h3>
                   <p className="text-xs text-neutral-500">
-                    Step {designerStep} of 4 • Configure and publish to NeonDB
+                    Step {designerStep} of 5 • Configure, customize, and publish to NeonDB
                   </p>
                 </div>
               </div>
@@ -1080,7 +1224,7 @@ export const InterviewDashboard: React.FC<InterviewDashboardProps> = ({
             </div>
 
             {/* Step Indicators */}
-            <div className="grid grid-cols-4 gap-2 text-center text-[11px] font-semibold">
+            <div className="grid grid-cols-5 gap-1.5 text-center text-[10px] sm:text-[11px] font-semibold">
               <div
                 className={`p-2 rounded-xl border ${
                   designerStep === 1
@@ -1090,7 +1234,7 @@ export const InterviewDashboard: React.FC<InterviewDashboardProps> = ({
                     : 'bg-neutral-50 text-neutral-400 border-neutral-200'
                 }`}
               >
-                1. Role Details
+                1. Role
               </div>
               <div
                 className={`p-2 rounded-xl border ${
@@ -1101,7 +1245,7 @@ export const InterviewDashboard: React.FC<InterviewDashboardProps> = ({
                     : 'bg-neutral-50 text-neutral-400 border-neutral-200'
                 }`}
               >
-                2. Tasks &amp; Settings
+                2. Tasks
               </div>
               <div
                 className={`p-2 rounded-xl border ${
@@ -1118,10 +1262,21 @@ export const InterviewDashboard: React.FC<InterviewDashboardProps> = ({
                 className={`p-2 rounded-xl border ${
                   designerStep === 4
                     ? 'bg-neutral-900 text-white border-neutral-900'
+                    : designerStep > 4
+                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
                     : 'bg-neutral-50 text-neutral-400 border-neutral-200'
                 }`}
               >
-                4. NeonDB Publish
+                4. Customizations
+              </div>
+              <div
+                className={`p-2 rounded-xl border ${
+                  designerStep === 5
+                    ? 'bg-neutral-900 text-white border-neutral-900'
+                    : 'bg-neutral-50 text-neutral-400 border-neutral-200'
+                }`}
+              >
+                5. Publish
               </div>
             </div>
 
@@ -1308,7 +1463,7 @@ export const InterviewDashboard: React.FC<InterviewDashboardProps> = ({
             {/* STEP 3: QUESTIONS */}
             {designerStep === 3 && (
               <div className="space-y-4">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div>
                     <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-600">
                       Screening Questions ({designerQuestions.length})
@@ -1317,14 +1472,47 @@ export const InterviewDashboard: React.FC<InterviewDashboardProps> = ({
                       Spoken aloud by Hana during the live meeting phase
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={handleAddQuestion}
-                    className="px-3 py-1.5 rounded-lg bg-sky-50 hover:bg-sky-100 border border-sky-200 text-sky-700 text-xs font-bold flex items-center gap-1 cursor-pointer"
-                  >
-                    <Plus className="w-3 h-3" />
-                    <span>Add Question</span>
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleAddQuestion}
+                      className="px-3 py-1.5 rounded-lg bg-sky-50 hover:bg-sky-100 border border-sky-200 text-sky-700 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>Add Question</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Quick Presets Drawer inside Questions */}
+                <div className="p-3 rounded-2xl bg-sky-50/60 border border-sky-200/80 space-y-2">
+                  <span className="text-[11px] font-bold text-sky-900 block flex items-center gap-1">
+                    <Sparkles className="w-3 h-3 text-sky-600" />
+                    <span>Quick Preset Question Packages:</span>
+                  </span>
+                  <div className="flex flex-wrap gap-2">
+                    {PRESET_QUESTION_PACKAGES.map((pkg) => (
+                      <button
+                        key={pkg.name}
+                        type="button"
+                        onClick={() => {
+                          setDesignerQuestions(
+                            pkg.questions.map((q) => ({
+                              id: `q_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+                              phase: q.phase,
+                              prompt: q.prompt,
+                              description: q.description,
+                            }))
+                          );
+                          if (!designerRole) setDesignerRole(pkg.role);
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-white hover:bg-sky-100 border border-sky-200 text-[11px] font-semibold text-sky-800 transition-colors cursor-pointer"
+                        title={pkg.description}
+                      >
+                        {pkg.name} ({pkg.questions.length}Q)
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
@@ -1373,6 +1561,165 @@ export const InterviewDashboard: React.FC<InterviewDashboardProps> = ({
 
                   <button
                     type="button"
+                    onClick={() => setDesignerStep(4)}
+                    className="px-5 py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-white font-bold text-xs flex items-center gap-1 cursor-pointer"
+                  >
+                    <span>Next: Additional Customizations</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* STEP 4: ADDITIONAL CUSTOMIZATIONS (3D Mode, Silence Timeouts, Voicelines, Presets) */}
+            {designerStep === 4 && (
+              <div className="space-y-4">
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-600 flex items-center gap-1.5">
+                    <Sliders className="w-3.5 h-3.5 text-sky-600" />
+                    <span>Additional Interview Customizations</span>
+                  </h4>
+                  <p className="text-[11px] text-neutral-500">
+                    Configure avatar visual mode, question presets, candidate silence timers, and voicelines
+                  </p>
+                </div>
+
+                {/* Customization 1: 3D Holographic Character Mode Toggle */}
+                <div className="p-4 rounded-2xl bg-neutral-50 border border-neutral-200 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-xl bg-sky-100 text-sky-700 flex items-center justify-center">
+                        <Video className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <span className="text-xs font-bold text-neutral-900 block">
+                          3D Interactive Avatar Mode (WebGL VRM)
+                        </span>
+                        <span className="text-[11px] text-neutral-500 block">
+                          Interactive 60fps avatar with real-time lip sync &amp; nods
+                        </span>
+                      </div>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={designerShow3D}
+                        onChange={(e) => setDesignerShow3D(e.target.checked)}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-neutral-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-sky-500"></div>
+                    </label>
+                  </div>
+                  <p className="text-[11px] text-neutral-500 bg-white/80 p-2 rounded-xl border border-neutral-200/60 leading-relaxed">
+                    {designerShow3D
+                      ? '✓ Enabled: Candidates will see the animated 3D VRM character with dynamic facial expressions and reactions.'
+                      : '○ Disabled: Replaces 3D model with lightweight 2D portrait & voice mode (ideal for low-power candidate devices).'}
+                  </p>
+                </div>
+
+                {/* Customization 2: Open Questions Silence Timeout */}
+                <div className="p-4 rounded-2xl bg-neutral-50 border border-neutral-200 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-neutral-900 flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5 text-sky-600" />
+                      <span>Open Question Silence Advance Timeout</span>
+                    </label>
+                    <span className="text-xs font-mono font-bold text-sky-700 bg-sky-100 px-2 py-0.5 rounded-lg border border-sky-200">
+                      {designerOpenSilenceSec}s
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-neutral-500">
+                    Duration Hana listens in silence after candidate stops speaking before moving to the next question.
+                  </p>
+                  <input
+                    type="range"
+                    min="2.0"
+                    max="6.0"
+                    step="0.5"
+                    value={designerOpenSilenceSec}
+                    onChange={(e) => setDesignerOpenSilenceSec(parseFloat(e.target.value))}
+                    className="w-full accent-sky-500 cursor-pointer"
+                  />
+                  <div className="flex justify-between text-[10px] text-neutral-400 font-mono">
+                    <span>2.0s (Fast)</span>
+                    <span>3.0s (Recommended)</span>
+                    <span>6.0s (Generous)</span>
+                  </div>
+                </div>
+
+                {/* Customization 3: Q&A Silence Timeout */}
+                <div className="p-4 rounded-2xl bg-neutral-50 border border-neutral-200 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-neutral-900 flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5 text-sky-600" />
+                      <span>Candidate Q&amp;A Session Silence Timeout</span>
+                    </label>
+                    <span className="text-xs font-mono font-bold text-sky-700 bg-sky-100 px-2 py-0.5 rounded-lg border border-sky-200">
+                      {designerQaSilenceSec}s
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-neutral-500">
+                    Duration of silence before Hana asks if the candidate has any other questions or concludes.
+                  </p>
+                  <input
+                    type="range"
+                    min="3.0"
+                    max="8.0"
+                    step="0.5"
+                    value={designerQaSilenceSec}
+                    onChange={(e) => setDesignerQaSilenceSec(parseFloat(e.target.value))}
+                    className="w-full accent-sky-500 cursor-pointer"
+                  />
+                  <div className="flex justify-between text-[10px] text-neutral-400 font-mono">
+                    <span>3.0s</span>
+                    <span>5.0s (Default)</span>
+                    <span>8.0s</span>
+                  </div>
+                </div>
+
+                {/* Customization 4: Silence Transition Voiceline */}
+                <div className="p-4 rounded-2xl bg-neutral-50 border border-neutral-200 space-y-2">
+                  <label className="text-xs font-bold text-neutral-900 block flex items-center gap-1.5">
+                    <Volume2 className="w-3.5 h-3.5 text-sky-600" />
+                    <span>Silence Advance Voiceline</span>
+                  </label>
+                  <p className="text-[11px] text-neutral-500">
+                    Spoken by Hana when advancing after candidate silence:
+                  </p>
+                  <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                    {PRESET_SILENCE_VOICELINES.map((line, idx) => (
+                      <label
+                        key={idx}
+                        className={`flex items-start gap-2 p-2 rounded-xl border text-xs cursor-pointer transition-all ${
+                          designerSilenceVoiceline === line
+                            ? 'bg-sky-50 border-sky-500 text-neutral-900 font-medium'
+                            : 'bg-white border-neutral-200 text-neutral-600 hover:border-neutral-300'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="silenceVoicelineDesigner"
+                          checked={designerSilenceVoiceline === line}
+                          onChange={() => setDesignerSilenceVoiceline(line)}
+                          className="mt-0.5 accent-sky-500"
+                        />
+                        <span className="text-[11px] leading-tight">&ldquo;{line}&rdquo;</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="pt-2 flex justify-between">
+                  <button
+                    type="button"
+                    onClick={() => setDesignerStep(3)}
+                    className="px-4 py-2 rounded-xl bg-neutral-100 hover:bg-neutral-200 text-neutral-700 text-xs font-semibold cursor-pointer"
+                  >
+                    Back: Questions
+                  </button>
+
+                  <button
+                    type="button"
                     onClick={handlePublishInterview}
                     disabled={isSavingInterview}
                     className="px-5 py-2 rounded-xl bg-sky-500 hover:bg-sky-400 disabled:opacity-50 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-md shadow-sky-500/20"
@@ -1393,8 +1740,8 @@ export const InterviewDashboard: React.FC<InterviewDashboardProps> = ({
               </div>
             )}
 
-            {/* STEP 4: SUCCESS & NEONDB PUBLISHED */}
-            {designerStep === 4 && publishedInterview && (
+            {/* STEP 5: SUCCESS & NEONDB PUBLISHED */}
+            {designerStep === 5 && publishedInterview && (
               <div className="text-center space-y-5 py-4">
                 <div className="w-16 h-16 rounded-2xl bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto shadow-inner">
                   <CheckCircle2 className="w-8 h-8" />

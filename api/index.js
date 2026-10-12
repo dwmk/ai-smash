@@ -2689,6 +2689,256 @@ router.post('/caller/webhooks/:platform', (req, res) => {
   return res.json({ ok: true, received: true, platform: req.params.platform });
 });
 
+// ----------------------------------------------------
+// Discord Bot Gateway / REST API Proxy (Serverless Parity)
+// ----------------------------------------------------
+router.post('/discord/test', async (req, res) => {
+  try {
+    const { botToken } = req.body || {};
+    const token = (botToken || '').trim();
+    if (!token) {
+      return res.status(400).json({ ok: false, message: 'Bot token cannot be empty.' });
+    }
+
+    const discordResp = await fetch('https://discord.com/api/v10/users/@me', {
+      headers: {
+        Authorization: `Bot ${token}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (discordResp.ok) {
+      const data = await discordResp.json();
+      return res.json({
+        ok: true,
+        message: `Connected successfully as @${data.username}#${data.discriminator || '0'} (ID: ${data.id})`,
+        details: data,
+      });
+    } else {
+      const err = await discordResp.json().catch(() => ({}));
+      return res.status(discordResp.status).json({
+        ok: false,
+        message: err.message || `Discord API error: ${discordResp.status} ${discordResp.statusText}`,
+      });
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Network error communicating with Discord';
+    return res.status(500).json({ ok: false, message: msg });
+  }
+});
+
+router.post('/discord/send', async (req, res) => {
+  try {
+    const { botToken, channelId, content, replyToMessageId } = req.body || {};
+    const token = (botToken || '').trim();
+    const chId = (channelId || '').trim();
+    const text = (content || '').trim();
+
+    if (!token || !chId || !text) {
+      return res.status(400).json({ ok: false, error: 'Missing botToken, channelId, or content' });
+    }
+
+    const payload = { content: text };
+    if (replyToMessageId) {
+      payload.message_reference = { message_id: replyToMessageId };
+    }
+
+    const discordResp = await fetch(`https://discord.com/api/v10/channels/${chId}/messages`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bot ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await discordResp.json().catch(() => ({}));
+    if (discordResp.ok) {
+      return res.json({ ok: true, data });
+    } else {
+      return res.status(discordResp.status).json({ ok: false, error: data.message || 'Failed to send message' });
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Error sending message to Discord';
+    return res.status(500).json({ ok: false, error: msg });
+  }
+});
+
+router.post('/discord/typing', async (req, res) => {
+  try {
+    const { botToken, channelId } = req.body || {};
+    const token = (botToken || '').trim();
+    const chId = (channelId || '').trim();
+    if (!token || !chId) {
+      return res.status(400).json({ ok: false, error: 'Missing botToken or channelId' });
+    }
+
+    await fetch(`https://discord.com/api/v10/channels/${chId}/typing`, {
+      method: 'POST',
+      headers: { Authorization: `Bot ${token}` },
+    });
+    return res.json({ ok: true });
+  } catch {
+    return res.status(500).json({ ok: false });
+  }
+});
+
+router.post('/discord/register-commands', async (req, res) => {
+  try {
+    const { botToken, applicationId, guildId } = req.body || {};
+    const token = (botToken || '').trim();
+    const appId = (applicationId || '').trim();
+    if (!token || !appId) {
+      return res.status(400).json({ ok: false, error: 'Missing botToken or applicationId' });
+    }
+
+    const commands = [
+      {
+        name: 'msg',
+        description: 'Send a prompt or query to Hana AI',
+        options: [
+          {
+            name: 'prompt',
+            description: 'Your prompt or question for Hana',
+            type: 3,
+            required: true,
+          },
+        ],
+      },
+      {
+        name: 'hana',
+        description: 'Chat with Hana AI companion',
+        options: [
+          {
+            name: 'prompt',
+            description: 'Your prompt or question for Hana',
+            type: 3,
+            required: true,
+          },
+        ],
+      },
+      {
+        name: 'ask',
+        description: 'Ask Hana AI a question',
+        options: [
+          {
+            name: 'question',
+            description: 'Your question',
+            type: 3,
+            required: true,
+          },
+        ],
+      },
+      {
+        name: 'help',
+        description: 'Display Hana AI bot command guide',
+      },
+      {
+        name: 'ping',
+        description: 'Check if Hana AI Discord bot is online and responding',
+      },
+      {
+        name: 'status',
+        description: 'View current Hana AI bot and engine status',
+      },
+    ];
+
+    const endpoint = guildId
+      ? `https://discord.com/api/v10/applications/${appId}/guilds/${guildId}/commands`
+      : `https://discord.com/api/v10/applications/${appId}/commands`;
+
+    const discordResp = await fetch(endpoint, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bot ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(commands),
+    });
+
+    const data = await discordResp.json().catch(() => ({}));
+    if (discordResp.ok) {
+      return res.json({ ok: true, commands: data });
+    } else {
+      return res.status(discordResp.status).json({ ok: false, error: data });
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Error registering slash commands';
+    return res.status(500).json({ ok: false, error: msg });
+  }
+});
+
+// Cloud streaming endpoint for Gemini chat (/api/chat)
+router.post('/chat', async (req, res) => {
+  try {
+    const { messages, systemPrompt, maxTokens } = req.body || {};
+    const apiKey = process.env.GEMINI_API_KEY;
+
+    if (!apiKey) {
+      return res.status(500).json({ error: 'GEMINI_API_KEY not configured on server' });
+    }
+
+    const ai = new GoogleGenAI({ apiKey });
+    const formattedContents = (messages || []).map((msg) => ({
+      role: msg.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: msg.content }],
+    }));
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    const outputTokens = Math.min(Math.max(Number(maxTokens) || 512, 64), 4096);
+    const candidateModels = [
+      'gemini-3.1-flash-lite',
+      'gemini-flash-latest',
+      'gemini-3.8-flash',
+    ];
+
+    let responseStream = null;
+    let lastError = null;
+
+    for (const cand of candidateModels) {
+      try {
+        responseStream = await ai.models.generateContentStream({
+          model: cand,
+          contents: formattedContents,
+          config: {
+            systemInstruction: systemPrompt || DEFAULT_SYSTEM_PROMPT,
+            temperature: 0.85,
+            maxOutputTokens: outputTokens,
+          },
+        });
+        if (responseStream) break;
+      } catch (streamErr) {
+        lastError = streamErr;
+      }
+    }
+
+    if (!responseStream) {
+      throw lastError || new Error('No available Gemini model responded');
+    }
+
+    for await (const chunk of responseStream) {
+      const text = chunk.text;
+      if (text) {
+        res.write(`data: ${JSON.stringify({ text })}\n\n`);
+      }
+    }
+
+    res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+    res.end();
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : 'Unknown streaming error';
+    if (!res.headersSent) {
+      res.status(500).json({ error: errorMessage });
+    } else {
+      res.write(`data: ${JSON.stringify({ error: errorMessage })}\n\n`);
+      res.end();
+    }
+  }
+});
+
 // =====================================================================
 // GRAPHQL SCHEMA & RESOLVERS FOR THIRD-PARTY CLIENTS
 // =====================================================================
