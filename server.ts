@@ -3992,6 +3992,135 @@ app.post('/api/account/sync', async (req: Request, res: Response) => {
   }
 });
 
+// =====================================================================
+// Autonomous AI Interviews & NeonDB Recruiting Suite Endpoints
+// =====================================================================
+
+// Create a new interview
+app.post('/api/interview/create', async (req: Request, res: Response) => {
+  try {
+    const body = req.body || {};
+    if (!body.title || !body.target_role) {
+      return res.status(400).json({ ok: false, error: 'Interview title and target role are required.' });
+    }
+    const id = body.id || `iv_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+    const record: InterviewRecord = {
+      id,
+      title: String(body.title).trim(),
+      target_role: String(body.target_role).trim(),
+      company_name: String(body.company_name || 'MuxAI').trim(),
+      description: String(body.description || '').trim(),
+      created_by_user_id: body.created_by_user_id ? Number(body.created_by_user_id) : null,
+      created_by_email: body.created_by_email ? String(body.created_by_email).trim() : null,
+      config: body.config || {},
+      questions: Array.isArray(body.questions) ? body.questions : [],
+      tasks: body.tasks || {},
+      company_qa_knowledge: Array.isArray(body.company_qa_knowledge) ? body.company_qa_knowledge : [],
+      active: body.active !== false,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    const saved = await createInterviewInDb(record);
+    return res.json({ ok: true, interview: saved });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Failed to create interview';
+    return res.status(500).json({ ok: false, error: message });
+  }
+});
+
+// List all active interviews
+app.get('/api/interview/list', async (req: Request, res: Response) => {
+  try {
+    const userId = req.query.userId ? Number(req.query.userId) : undefined;
+    const interviews = await listInterviewsFromDb(userId);
+    return res.json({ ok: true, interviews });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Failed to list interviews';
+    return res.status(500).json({ ok: false, error: message, interviews: [DEFAULT_DEMO_INTERVIEW] });
+  }
+});
+
+// List interview submissions / history
+app.get(['/api/interview-history', '/api/interview/history', '/api/interview/submissions'], async (req: Request, res: Response) => {
+  try {
+    const interviewId = req.query.interviewId ? String(req.query.interviewId).trim() : undefined;
+    const submissions = await listInterviewSubmissionsFromDb(interviewId);
+    return res.json({ ok: true, submissions });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Failed to fetch interview history';
+    return res.status(500).json({ ok: false, error: message, submissions: [] });
+  }
+});
+
+// Submit a completed candidate session for an interview
+app.post(['/api/interview/:id/submit', '/api/interview/submit'], async (req: Request, res: Response) => {
+  try {
+    const rawId = req.params.id || req.body?.interview_id || 'demo';
+    const interviewId = String(rawId).trim();
+    const body = req.body || {};
+    const subId = body.id || `sub_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+    const submission: InterviewSubmissionRecord = {
+      id: subId,
+      interview_id: interviewId,
+      candidate_name: String(body.candidate_name || 'Candidate').trim(),
+      candidate_email: body.candidate_email ? String(body.candidate_email).trim() : undefined,
+      status: body.status || 'completed',
+      score: typeof body.score === 'number' ? body.score : 85,
+      responses: Array.isArray(body.responses) ? body.responses : [],
+      snapshots: Array.isArray(body.snapshots) ? body.snapshots : [],
+      resume_data: body.resume_data || null,
+      written_task: body.written_task || '',
+      pressure_rating: body.pressure_rating || '',
+      ai_evaluation: body.ai_evaluation || undefined,
+      completed_at: new Date().toISOString(),
+    };
+
+    const saved = await submitInterviewSessionToDb(submission);
+    return res.json({ ok: true, submission: saved });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Failed to submit interview session';
+    return res.status(500).json({ ok: false, error: message });
+  }
+});
+
+// Get a single interview by ID
+app.get('/api/interview/:id', async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    if (!id) {
+      return res.status(400).json({ ok: false, error: 'Interview ID is required' });
+    }
+    const interview = await getInterviewByIdFromDb(id);
+    if (!interview) {
+      if (id === 'demo') {
+        return res.json({ ok: true, interview: DEFAULT_DEMO_INTERVIEW });
+      }
+      return res.status(404).json({ ok: false, error: `Interview "${id}" not found` });
+    }
+    return res.json({ ok: true, interview });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Failed to fetch interview';
+    return res.status(500).json({ ok: false, error: message });
+  }
+});
+
+// Delete an interview by ID
+app.delete('/api/interview/:id', async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    if (!id || id === 'demo') {
+      return res.status(400).json({ ok: false, error: 'Cannot delete demo interview template.' });
+    }
+    const userId = req.body?.userId ? Number(req.body.userId) : undefined;
+    const success = await deleteInterviewFromDb(id, userId);
+    return res.json({ ok: success });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Failed to delete interview';
+    return res.status(500).json({ ok: false, error: message });
+  }
+});
+
 // ----------------------------------------------------
 // Discord Bot Gateway / REST API Proxy
 // ----------------------------------------------------
@@ -4427,6 +4556,11 @@ app.all('/api/caller/webhooks/:platform', (req: Request, res: Response) => {
   // Incoming webhook message or call event
   console.log(`[Webhook Event] ${platform}:`, JSON.stringify(req.body));
   return res.status(200).json({ ok: true, platform, receivedAt: Date.now() });
+});
+
+// Explicit JSON 404 for unhandled /api/* routes to prevent API calls falling through to HTML index
+app.all('/api/*', (_req: Request, res: Response) => {
+  res.status(404).json({ ok: false, error: 'API endpoint not found' });
 });
 
 async function startServer() {

@@ -113,6 +113,8 @@ export interface NPCEntity {
   ragdollParticles: RagdollParticle[];
   ragdollSticks: RagdollStick[];
   hairBones: HairBoneTrack[];
+  expressionState: 'neutral' | 'pain' | 'death';
+  deathPoseBones?: Map<string, { rot: THREE.Euler; quat: THREE.Quaternion; pos: THREE.Vector3 }>;
 }
 
 export interface GibEntity {
@@ -135,7 +137,7 @@ export interface BloodParticle {
 }
 
 // Player Default Outfit
-const PLAYER_OUTFIT: WardrobeOutfit = ALL_WARDROBE_OUTFITS.find((o) => o.id === 'pain-giver');
+const PLAYER_OUTFIT: WardrobeOutfit = ALL_WARDROBE_OUTFITS.find((o) => o.id === 'pain-giver') || ALL_WARDROBE_OUTFITS[0];
 
 // Blood liquid colors
 const BLOOD_COLORS: Record<BloodStyle, { base: number; drip: number; mist: number; name: string }> = {
@@ -296,13 +298,29 @@ function getMazeFloorHeightAt(x: number, z: number, maze: MazeData): number {
   return GROUND_FLOOR_Y;
 }
 
-// Resolve horizontal collisions with walls (only when character is BELOW wall top)
-function resolveMazeCollision(pos: THREE.Vector3, radius: number, maze: MazeData): void {
-  // If entity is jumping above or walking on the wall top, do not block horizontal motion!
-  if (pos.y >= MAZE_WALL_HEIGHT - 0.15) {
-    return;
+// Resolve horizontal collisions with walls.
+// For NPCs, strictly clamps height below wall top and slams them against walls instead of flying over!
+function resolveMazeCollision(
+  pos: THREE.Vector3,
+  radius: number,
+  maze: MazeData,
+  isPlayer: boolean = false,
+  vel?: THREE.Vector3
+): boolean {
+  // If player legitimately jumps with Spacebar above the wall top, allow walking on wall top
+  if (isPlayer && pos.y >= MAZE_WALL_HEIGHT - 0.15) {
+    return false;
   }
 
+  // Non-player entities (NPCs/corpses) are strictly clamped below wall top so they never fly over walls!
+  if (!isPlayer && pos.y > MAZE_WALL_HEIGHT - 0.45) {
+    pos.y = MAZE_WALL_HEIGHT - 0.45;
+    if (vel) {
+      vel.y = Math.min(vel.y, 0);
+    }
+  }
+
+  let collided = false;
   const offset = ((maze.size - 1) * maze.cellSize) / 2;
   const halfCell = maze.cellSize / 2;
 
@@ -331,19 +349,35 @@ function resolveMazeCollision(pos: THREE.Vector3, radius: number, maze: MazeData
           const distSq = distX * distX + distZ * distZ;
 
           if (distSq < radius * radius) {
+            collided = true;
             const dist = Math.sqrt(distSq);
             if (dist > 0.0001) {
               const push = (radius - dist) / dist;
               pos.x += distX * push;
               pos.z += distZ * push;
+              if (vel) {
+                // Slam against wall: absorb velocity into wall normal and drop downwards
+                const nx = distX / dist;
+                const nz = distZ / dist;
+                const dot = vel.x * nx + vel.z * nz;
+                if (dot < 0) {
+                  vel.x -= dot * nx * 1.5;
+                  vel.z -= dot * nz * 1.5;
+                  vel.x *= 0.15;
+                  vel.z *= 0.15;
+                  vel.y = Math.min(vel.y, 0);
+                }
+              }
             } else {
               pos.x += radius;
+              if (vel) vel.set(0, 0, 0);
             }
           }
         }
       }
     }
   }
+  return collided;
 }
 
 // ============================================================================
@@ -572,6 +606,53 @@ function createFleshCapMesh(radius: number, colorHex: number): THREE.Mesh {
 }
 
 // ============================================================================
+// Facial Expression Helpers: Pain & Tiredness for NPCs, Smug Smile for Player
+// ============================================================================
+function setNpcExpression(npc: NPCEntity, state: 'neutral' | 'pain' | 'death') {
+  if (!npc.vrm || !npc.vrm.expressionManager) return;
+  const em = npc.vrm.expressionManager;
+  if (state === 'pain') {
+    // Pain and tiredness upon hit: furrowed brows, heavy wincing eyelids, gasping breathless mouth
+    em.setValue('sad', 0.95);
+    em.setValue('angry', 0.4);
+    em.setValue('blink', 0.65);
+    em.setValue('aa', 0.35);
+    em.setValue('relaxed', 0.15);
+    em.setValue('happy', 0.0);
+  } else if (state === 'death') {
+    // Deep pain and final exhaustion/tiredness upon death: closed eyes, slack mouth, exhausted facial muscles
+    em.setValue('sad', 1.0);
+    em.setValue('relaxed', 0.8);
+    em.setValue('blink', 0.95);
+    em.setValue('aa', 0.25);
+    em.setValue('angry', 0.15);
+    em.setValue('happy', 0.0);
+  } else {
+    em.setValue('neutral', 1.0);
+    em.setValue('sad', 0.0);
+    em.setValue('angry', 0.0);
+    em.setValue('blink', 0.0);
+    em.setValue('aa', 0.0);
+    em.setValue('happy', 0.0);
+    em.setValue('relaxed', 0.0);
+  }
+  em.update();
+}
+
+function updatePlayerSmugSmile(vrm: VRM | null) {
+  if (!vrm || !vrm.expressionManager) return;
+  const em = vrm.expressionManager;
+  // Smug slight smile with relaxed confident posture
+  em.setValue('happy', 0.52);
+  em.setValue('relaxed', 0.38);
+  em.setValue('neutral', 0.15);
+  em.setValue('blink', 0.0);
+  em.setValue('sad', 0.0);
+  em.setValue('angry', 0.0);
+  em.update();
+}
+
+// ============================================================================
 // VRM Buffer Fetcher & Memory Cache
 // ============================================================================
 const vrmBufferCache = new Map<string, ArrayBuffer>();
@@ -682,7 +763,8 @@ function localizeAnimationClip(clip: THREE.AnimationClip, vrm?: VRM): THREE.Anim
 
       for (let i = 0; i < values.length; i += 3) {
         values[i] = (values[i] - baseX) * 0.25;
-        values[i + 1] = values[i + 1] + yOffset;
+        // Strictly cap hips Y translation below 1.25m so animations never launch characters over walls!
+        values[i + 1] = Math.min(values[i + 1] + yOffset, 1.25);
         values[i + 2] = (values[i + 2] - baseZ) * 0.25;
       }
     }
@@ -935,6 +1017,11 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
   // Screen Shake
   const screenShakeRef = useRef<number>(0);
 
+  // Background Initializing Loading Screen State
+  const [isLoadingScreen, setIsLoadingScreen] = useState<boolean>(true);
+  const [loadingProgress, setLoadingProgress] = useState<number>(18);
+  const [loadingStatusText, setLoadingStatusText] = useState<string>('Generating procedural 3D maze arena...');
+
   // ----------------------------------------------------
   // Full Verlet Ragdoll System Setup
   // ----------------------------------------------------
@@ -1074,6 +1161,8 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
         ragdollParticles: [],
         ragdollSticks: [],
         hairBones: [],
+        expressionState: 'neutral',
+        deathPoseBones: new Map(),
       };
 
       const gltfLoader = new GLTFLoader();
@@ -1369,53 +1458,44 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
         worldPos.copy(npc.position).add(new THREE.Vector3(0, 1.2, 0));
       }
 
-      // 4. Create Detached Physical 3D Limb Object with Wireframe Damage Overlay
-      const gibGeo = def ? def.geo.clone() : new THREE.CylinderGeometry(0.06, 0.05, 0.25, 8);
-      const gibMat = new THREE.MeshStandardMaterial({
-        color: colors.base,
-        roughness: 0.8,
-        metalness: 0.0,
+      // 4. Spread out lots of tiny spheres that turn into blood stains/puddles upon touching surfaces (no polygon gibs)
+      const sphereGeo = new THREE.SphereGeometry(0.045, 6, 6);
+      const sphereMat = new THREE.MeshStandardMaterial({
+        color: colors.drip,
+        roughness: 0.25,
+        metalness: 0.1,
       });
-      const gibMesh = new THREE.Mesh(gibGeo, gibMat);
-      gibMesh.position.copy(worldPos);
 
-      // Glowing Wireframe damage edge lines
-      const wireGeo = new THREE.WireframeGeometry(gibGeo);
-      const wireMat = new THREE.LineBasicMaterial({
-        color: 0xff0055,
-        transparent: true,
-        opacity: 0.85,
-      });
-      const wireLines = new THREE.LineSegments(wireGeo, wireMat);
-      gibMesh.add(wireLines);
+      const sphereCount = Math.floor(16 * forceMultiplier);
+      for (let i = 0; i < sphereCount; i++) {
+        const sphereMesh = new THREE.Mesh(sphereGeo, sphereMat);
+        sphereMesh.position.copy(worldPos);
+        scene.add(sphereMesh);
 
-      scene.add(gibMesh);
+        const angle = Math.random() * Math.PI * 2;
+        const radial = new THREE.Vector3(
+          Math.cos(angle) * (0.8 + Math.random() * 0.8),
+          0.3 + Math.random() * 1.2,
+          Math.sin(angle) * (0.8 + Math.random() * 0.8)
+        ).normalize();
 
-      // 5. Dynamic outward velocity & angular impulse
-      const gibVel = punchDir
-        .clone()
-        .multiplyScalar(6.5 * forceMultiplier)
-        .add(
-          new THREE.Vector3(
-            (Math.random() - 0.5) * 4.0,
-            2.8 + Math.random() * 3.5,
-            (Math.random() - 0.5) * 4.0
-          )
-        );
+        const gibVel = punchDir
+          .clone()
+          .setY(0)
+          .normalize()
+          .multiplyScalar(3.5 * forceMultiplier)
+          .add(radial.multiplyScalar(4.5 * (0.5 + Math.random() * 0.8)));
 
-      gibsRef.current.push({
-        mesh: gibMesh,
-        position: worldPos.clone(),
-        velocity: gibVel,
-        angularVelocity: new THREE.Vector3(
-          (Math.random() - 0.5) * 16,
-          (Math.random() - 0.5) * 16,
-          (Math.random() - 0.5) * 16
-        ),
-        life: 0,
-        maxLife: 22,
-        isFleshCap: true,
-      });
+        gibsRef.current.push({
+          mesh: sphereMesh,
+          position: worldPos.clone(),
+          velocity: gibVel,
+          angularVelocity: new THREE.Vector3(),
+          life: 0,
+          maxLife: 4.5,
+          isFleshCap: false,
+        });
+      }
 
       return affectedVerticesCount;
     },
@@ -1480,10 +1560,12 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
         }
       }
 
-      // Impulse velocity
-      const forceMultiplier = chargeLevel === 4 ? 9.5 : chargeLevel === 3 ? 7.5 : chargeLevel === 2 ? 5.0 : 3.0;
-      npc.velocity.add(punchDir.clone().multiplyScalar(forceMultiplier));
-      npc.staggerVelocity += forceMultiplier * 3.5;
+      // Impulse velocity: strictly horizontal knockback slams NPC into walls without launching upward
+      const forceMultiplier = chargeLevel === 4 ? 6.0 : chargeLevel === 3 ? 5.0 : chargeLevel === 2 ? 3.8 : 2.2;
+      const horizontalPunch = punchDir.clone().setY(0).normalize();
+      npc.velocity.add(horizontalPunch.multiplyScalar(forceMultiplier));
+      npc.velocity.y = 0; // Strictly 0 so NPC never launches into the air or over walls
+      npc.staggerVelocity += forceMultiplier * 2.5;
 
       emitBloodSpray(
         npc.position.clone().add(new THREE.Vector3(0, 1.1, 0)),
@@ -1507,53 +1589,48 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
         npc.isObliterated = true;
         npc.isDead = true;
         npc.isRagdoll = true;
+        setNpcExpression(npc, 'death');
 
         const origin = npc.position.clone().add(new THREE.Vector3(0, 0.9, 0));
         const colors = BLOOD_COLORS[bloodStyleRef.current];
 
-        // Detach EVERY body part and spread around the maze with wireframe extraction
+        // Detach body parts with tiny blood gib droplets (no independent meat gibs)
         for (const def of VRM_COLLIDER_DEFS) {
           severBodyPartWithWireframe(npc, def.boneKey, punchDir, 1.4);
         }
 
-        // Additional 20 meat gib chunks flying in 360-degree radius
-        const gibGeos = [
-          new THREE.SphereGeometry(0.12, 8, 8),
-          new THREE.BoxGeometry(0.18, 0.14, 0.12),
-          new THREE.CylinderGeometry(0.06, 0.05, 0.22, 6),
-          new THREE.SphereGeometry(0.09, 8, 8),
-          new THREE.BoxGeometry(0.14, 0.1, 0.08),
-        ];
+        // Lots of tiny spheres that spread out and turn into blood stains/puddles upon touching surfaces
+        const sphereGeo = new THREE.SphereGeometry(0.045, 6, 6);
+        const sphereMat = new THREE.MeshStandardMaterial({
+          color: colors.drip,
+          roughness: 0.25,
+          metalness: 0.1,
+        });
 
-        for (let i = 0; i < 20; i++) {
-          const geo = gibGeos[i % gibGeos.length];
-          const mat = new THREE.MeshStandardMaterial({
-            color: Math.random() > 0.3 ? colors.base : colors.drip,
-            roughness: 0.8,
-            metalness: 0.0,
-          });
-          const gibMesh = new THREE.Mesh(geo, mat);
-          gibMesh.position.copy(origin);
-          scene.add(gibMesh);
+        for (let i = 0; i < 40; i++) {
+          const sphereMesh = new THREE.Mesh(sphereGeo, sphereMat);
+          sphereMesh.position.copy(origin);
+          scene.add(sphereMesh);
 
           const burstAngle = Math.random() * Math.PI * 2;
-          const radial = new THREE.Vector3(Math.cos(burstAngle), 0, Math.sin(burstAngle));
-          const gibVel = radial.multiplyScalar(4.5 + Math.random() * 6.5)
-            .add(punchDir.clone().multiplyScalar(4.0))
-            .add(new THREE.Vector3(0, 2.5 + Math.random() * 5.5, 0));
+          const radial = new THREE.Vector3(
+            Math.cos(burstAngle) * (0.8 + Math.random() * 0.8),
+            0.3 + Math.random() * 1.0,
+            Math.sin(burstAngle) * (0.8 + Math.random() * 0.8)
+          ).normalize();
+
+          const sphereVel = radial.multiplyScalar(4.5 + Math.random() * 5.5)
+            .add(punchDir.clone().setY(0).normalize().multiplyScalar(3.0))
+            .add(new THREE.Vector3(0, 1.2 + Math.random() * 2.5, 0));
 
           gibsRef.current.push({
-            mesh: gibMesh,
+            mesh: sphereMesh,
             position: origin.clone(),
-            velocity: gibVel,
-            angularVelocity: new THREE.Vector3(
-              (Math.random() - 0.5) * 18,
-              (Math.random() - 0.5) * 18,
-              (Math.random() - 0.5) * 18
-            ),
+            velocity: sphereVel,
+            angularVelocity: new THREE.Vector3(),
             life: 0,
-            maxLife: 24,
-            isFleshCap: true,
+            maxLife: 4.5,
+            isFleshCap: false,
           });
         }
 
@@ -1575,26 +1652,42 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
         if ((npc.health <= 0 || chargeLevel === 3) && !npc.isDead) {
           npc.isDead = true;
           npc.health = 0;
-          npc.dyingTimer = 2.0;
+          npc.dyingTimer = 2.4;
+          npc.expressionState = 'death';
+          setNpcExpression(npc, 'death');
 
-          const npcForward = new THREE.Vector3(0, 0, -1).applyEuler(npc.rotation);
-          const attackAngleDot = punchDir.dot(npcForward);
+          // World forward vectors in glTF coordinate convention (-Z is forward):
+          const npcFwd = new THREE.Vector3(0, 0, -1).applyEuler(npc.rotation).setY(0).normalize();
+          const playerFwd = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(0, playerYawRef.current, 0)).setY(0).normalize();
+          const attackDir = punchDir.clone().setY(0).normalize();
 
-          if (chargeLevel >= 2) {
-            if (attackAngleDot < -0.1) {
-              playNPCAnimation(npc, 'mixamo_dying_flyback.fbx', false, true);
-            } else {
-              playNPCAnimation(npc, 'mixamo_dying_slideforward.fbx', false, true);
-            }
+          // An attack is from behind if the attack vector aligns with the NPC's forward direction
+          // (hitting them in the back) OR if player and NPC are facing the same direction:
+          const isAttackedFromBehind = attackDir.dot(npcFwd) > 0.05 || playerFwd.dot(npcFwd) > 0.15;
+
+          if (isAttackedFromBehind) {
+            // Attacks on NPCs from behind ALWAYS play dying slideforward animation
+            playNPCAnimation(npc, 'mixamo_dying_slideforward.fbx', false, true);
+          } else if (chargeLevel >= 2) {
+            // Heavy frontal attack plays dying flyback
+            playNPCAnimation(npc, 'mixamo_dying_flyback.fbx', false, true);
           } else {
+            // Standard frontal dying
             playNPCAnimation(npc, 'mixamo_dying.fbx', false, true);
           }
         } else if (npc.health > 0 && !isGroinAttack) {
+          npc.expressionState = 'pain';
+          setNpcExpression(npc, 'pain');
           playNPCAnimation(npc, 'mixamo_idle_injured.fbx', true, false);
         } else if (npc.isDead) {
-          // If corpse is attacked again: switch immediately to free ragdoll!
+          // If corpse is attacked again: switch immediately to free ragdoll and apply impulse!
+          npc.expressionState = 'death';
+          setNpcExpression(npc, 'death');
           npc.isRagdoll = true;
           setupNPCRagdoll(npc);
+          for (const p of npc.ragdollParticles) {
+            p.prevPosition.sub(punchDir.clone().setY(0).normalize().multiplyScalar(forceMultiplier * 0.15));
+          }
         }
       }
 
@@ -1681,6 +1774,9 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
     keyLight.shadow.camera.right = 25;
     keyLight.shadow.camera.top = 25;
     keyLight.shadow.camera.bottom = -25;
+    // Clean shadow settings: eliminates shadow acne stripes and black artifacts across wall surfaces
+    keyLight.shadow.bias = -0.0001;
+    keyLight.shadow.normalBias = 0.005;
     scene.add(keyLight);
 
     const cyanFillLight = new THREE.DirectionalLight(0xa5e8fc, 1.1);
@@ -1732,12 +1828,12 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
     grid.material.transparent = true;
     scene.add(grid);
 
-    // Wall Mesh: Matte non-shiny optimized material
+    // Wall Mesh: Clean solid matte material with smooth, clean top surface (no overlapping geometry or stripes)
     const wallGeo = new THREE.BoxGeometry(maze.cellSize, MAZE_WALL_HEIGHT, maze.cellSize);
     const wallMat = new THREE.MeshStandardMaterial({
-      color: 0x2a3245,
-      roughness: 0.95,
-      metalness: 0.0,
+      color: 0x242c3d,
+      roughness: 0.85,
+      metalness: 0.02,
     });
 
     const wallMesh = new THREE.InstancedMesh(wallGeo, wallMat, maze.walls.length);
@@ -1751,17 +1847,6 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
     });
     wallMesh.instanceMatrix.needsUpdate = true;
     scene.add(wallMesh);
-
-    // Lightweight Emissive Wall Trim Lines
-    const trimGeo = new THREE.BoxGeometry(maze.cellSize * 0.98, 0.06, maze.cellSize * 0.98);
-    const trimMat = new THREE.MeshBasicMaterial({ color: 0x55d2f6, transparent: true, opacity: 0.75 });
-    const trimMesh = new THREE.InstancedMesh(trimGeo, trimMat, maze.walls.length);
-    maze.walls.forEach((w, idx) => {
-      dummyWallMat.setPosition(w.x, MAZE_WALL_HEIGHT - 0.03, w.z);
-      trimMesh.setMatrixAt(idx, dummyWallMat);
-    });
-    trimMesh.instanceMatrix.needsUpdate = true;
-    scene.add(trimMesh);
 
     // Blood Decals Container
     const decalsGroup = new THREE.Group();
@@ -1787,8 +1872,17 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
     const gltfLoader = new GLTFLoader();
     gltfLoader.register((parser) => new VRMLoaderPlugin(parser));
 
+    setLoadingProgress(35);
+    setLoadingStatusText('Loading Player VRM avatar & humanoid rigs...');
+
     fetchVRMBuffer(PLAYER_OUTFIT).then((buf) => {
-      if (isDisposed || !buf) return;
+      if (isDisposed || !buf) {
+        setIsLoadingScreen(false);
+        return;
+      }
+
+      setLoadingProgress(60);
+      setLoadingStatusText('Calibrating bone constraints & physics...');
 
       gltfLoader.parse(
         buf,
@@ -1833,11 +1927,15 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
 
             playerRoot.add(vrm.scene);
             playerVrmRef.current = vrm;
+            updatePlayerSmugSmile(vrm);
             playerHairBonesRef.current = collectHairBones(vrm);
             vrm.update(0);
 
             const mixer = new THREE.AnimationMixer(vrm.scene);
             playerMixerRef.current = mixer;
+
+            setLoadingProgress(80);
+            setLoadingStatusText('Loading retargeted animation clips...');
 
             loadRetargetedClipFromFBX('mixamo_walk.fbx', vrm).then((clip) => {
               if (clip && playerMixerRef.current === mixer) {
@@ -1869,10 +1967,21 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
                 }
               }
             });
+
+            setLoadingProgress(92);
+            setLoadingStatusText('Spawning combat NPCs...');
+            setTimeout(() => {
+              setLoadingProgress(100);
+              setLoadingStatusText('Arena Ready!');
+              setTimeout(() => {
+                setIsLoadingScreen(false);
+              }, 280);
+            }, 450);
           }
         },
         (err) => {
           console.warn('Failed to parse player VRM:', err);
+          setIsLoadingScreen(false);
         }
       );
     });
@@ -2113,6 +2222,7 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
         }
 
         pVrm.scene.updateMatrixWorld(true);
+        updatePlayerSmugSmile(pVrm);
         pVrm.update(dt);
       }
 
@@ -2204,16 +2314,36 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
         if (npc.isDead && npc.dyingTimer > 0) {
           npc.dyingTimer -= dt;
           if (npc.dyingTimer <= 0) {
+            // Keep last keyframe of dying animation clamped, then seamlessly transition to dynamic freely ragdolling
+            if (npc.vrm && npc.vrm.humanoid) {
+              VRM_COLLIDER_DEFS.forEach((def) => {
+                const bone = npc.vrm!.humanoid!.getNormalizedBoneNode(def.vrmBone as any);
+                if (bone) {
+                  npc.deathPoseBones!.set(def.boneKey, {
+                    rot: bone.rotation.clone(),
+                    quat: bone.quaternion.clone(),
+                    pos: bone.position.clone(),
+                  });
+                }
+              });
+            }
             npc.isRagdoll = true;
             setupNPCRagdoll(npc);
+            npc.expressionState = 'death';
+            setNpcExpression(npc, 'death');
           }
         }
 
         // Push corpse if player walks into it!
         const distToPlayer = npc.position.distanceTo(playerPos);
-        if (distToPlayer < 0.9 && npc.isDead) {
+        if (distToPlayer < 1.1 && npc.isDead) {
           const pushVec = npc.position.clone().sub(playerPos).setY(0).normalize();
           npc.velocity.add(pushVec.multiplyScalar(4.5 * dt));
+          if (npc.isRagdoll && npc.ragdollParticles.length > 0) {
+            for (const p of npc.ragdollParticles) {
+              p.position.add(pushVec.clone().multiplyScalar(2.4 * dt));
+            }
+          }
         }
 
         // Living & not ragdoll: execute wandering (only if uninjured!)
@@ -2238,7 +2368,7 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
             if (npc.wanderState === 'walk') {
               const wanderSpeed = 1.6;
               npc.position.add(npc.wanderDir.clone().multiplyScalar(wanderSpeed * dt));
-              resolveMazeCollision(npc.position, 0.38, currentMaze);
+              resolveMazeCollision(npc.position, 0.38, currentMaze, false);
 
               const targetYaw = Math.atan2(npc.wanderDir.x, npc.wanderDir.z);
               let diff = targetYaw - npc.rotation.y;
@@ -2250,20 +2380,24 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
           }
         }
 
-        // Apply velocity & maze wall collisions for living, dying and corpse entities!
+        // Apply velocity & maze wall collisions: slam against walls without flying over!
         npc.position.add(npc.velocity.clone().multiplyScalar(dt));
         npc.velocity.multiplyScalar(Math.pow(0.85, dt * 60));
-        resolveMazeCollision(npc.position, 0.38, currentMaze);
+        resolveMazeCollision(npc.position, 0.38, currentMaze, false, npc.velocity);
 
-        // Strict rule: NPC position never below ground!
+        // Strict rule: NPC position never below ground and clamped below wall top!
         if (npc.position.y < npcGroundY) {
           npc.position.y = npcGroundY;
+        }
+        if (npc.position.y > MAZE_WALL_HEIGHT - 0.45) {
+          npc.position.y = MAZE_WALL_HEIGHT - 0.45;
+          npc.velocity.y = Math.min(npc.velocity.y, 0);
         }
 
         npc.rootGroup.position.copy(npc.position);
 
-        // ALWAYS update animation mixer so dying animations advance and play!
-        if (npc.mixer) {
+        // Update animation mixer so dying animations advance and play; once ragdolled, ragdoll controls bones
+        if (npc.mixer && !npc.isRagdoll) {
           npc.mixer.update(dt);
         }
 
@@ -2283,7 +2417,12 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
               p.prevPosition.x = THREE.MathUtils.lerp(p.prevPosition.x, p.position.x, 0.35);
               p.prevPosition.z = THREE.MathUtils.lerp(p.prevPosition.z, p.position.z, 0.35);
             }
-            resolveMazeCollision(p.position, p.radius, currentMaze);
+            // Strict ceiling clamp: never fly up or over maze walls
+            if (p.position.y > MAZE_WALL_HEIGHT - 0.45) {
+              p.position.y = MAZE_WALL_HEIGHT - 0.45;
+              p.prevPosition.y = Math.max(p.prevPosition.y, p.position.y);
+            }
+            resolveMazeCollision(p.position, p.radius, currentMaze, false);
           }
 
           // Skeletal distance relaxation
@@ -2305,15 +2444,75 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
             npc.rootGroup.position.copy(npc.position);
           }
 
-          for (const p of npc.ragdollParticles) {
-            if (p.boneNode) {
-              p.boneNode.position.copy(p.position).sub(npc.position);
+          // Dynamic Limp Lifeless Ragdoll Posing: extremities and torso slump naturally with gravity and rest flat on floor
+          if (npc.vrm && npc.vrm.humanoid) {
+            // Restore final keyframe rotation baseline so bones never snap to stiff A-pose
+            if (npc.deathPoseBones) {
+              for (const [k, saved] of npc.deathPoseBones.entries()) {
+                const def = VRM_COLLIDER_DEFS.find((d) => d.boneKey === k);
+                if (def) {
+                  const bone = npc.vrm.humanoid.getNormalizedBoneNode(def.vrmBone as any);
+                  if (bone) {
+                    bone.rotation.copy(saved.rot);
+                  }
+                }
+              }
+            }
+
+            const headNode = npc.vrm.humanoid.getNormalizedBoneNode('head');
+            if (headNode) {
+              headNode.rotation.x = -0.38; // limp neck slump resting lifelessly on floor
+              headNode.rotation.z = Math.sin(npc.position.x * 2.0 + npc.position.z * 2.0) * 0.22;
+              headNode.rotation.y = 0.15;
+            }
+            const leftArmNode = npc.vrm.humanoid.getNormalizedBoneNode('leftUpperArm');
+            if (leftArmNode) {
+              leftArmNode.rotation.set(0.15, 0.08, -1.35); // limp arm resting by side along floor
+            }
+            const rightArmNode = npc.vrm.humanoid.getNormalizedBoneNode('rightUpperArm');
+            if (rightArmNode) {
+              rightArmNode.rotation.set(0.15, -0.08, 1.35); // limp arm resting by side along floor
+            }
+            const leftForearm = npc.vrm.humanoid.getNormalizedBoneNode('leftLowerArm');
+            if (leftForearm) {
+              leftForearm.rotation.set(0.08, -0.12, -0.15);
+            }
+            const rightForearm = npc.vrm.humanoid.getNormalizedBoneNode('rightLowerArm');
+            if (rightForearm) {
+              rightForearm.rotation.set(0.08, 0.12, 0.15);
+            }
+            const leftThigh = npc.vrm.humanoid.getNormalizedBoneNode('leftUpperLeg');
+            if (leftThigh) {
+              leftThigh.rotation.set(0.12, 0.1, 0.22); // limp relaxed leg along floor
+            }
+            const rightThigh = npc.vrm.humanoid.getNormalizedBoneNode('rightUpperLeg');
+            if (rightThigh) {
+              rightThigh.rotation.set(0.12, -0.1, -0.22); // limp relaxed leg along floor
+            }
+            const leftCalf = npc.vrm.humanoid.getNormalizedBoneNode('leftLowerLeg');
+            if (leftCalf) {
+              leftCalf.rotation.set(0.18, 0.0, 0.0);
+            }
+            const rightCalf = npc.vrm.humanoid.getNormalizedBoneNode('rightLowerLeg');
+            if (rightCalf) {
+              rightCalf.rotation.set(0.18, 0.0, 0.0);
             }
           }
+          setNpcExpression(npc, 'death');
+        } else {
+          // Living NPCs maintain their current expression (pain or neutral)
+          setNpcExpression(npc, npc.expressionState);
         }
 
-        // Enforce strict above-ground rule on every NPC
-        clampEntityAboveGround(npc.rootGroup, npc.vrm, npcGroundY);
+        // Enforce strict above-ground rule ONLY on living NPCs; dead fallen ragdoll corpses rest naturally on the floor!
+        if (!npc.isDead && !npc.isRagdoll) {
+          clampEntityAboveGround(npc.rootGroup, npc.vrm, npcGroundY);
+        } else {
+          if (npc.rootGroup.position.y < npcGroundY + 0.08) {
+            npc.rootGroup.position.y = npcGroundY + 0.08;
+            npc.position.y = npcGroundY + 0.08;
+          }
+        }
 
         if (npc.vrm) {
           npc.vrm.scene.updateMatrixWorld(true);
@@ -2348,24 +2547,25 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
         gib.velocity.y -= 14.0 * dt;
         gib.position.add(gib.velocity.clone().multiplyScalar(dt));
 
-        const gibGroundY = getMazeFloorHeightAt(gib.position.x, gib.position.z, currentMaze) + 0.08;
+        const gibGroundY = getMazeFloorHeightAt(gib.position.x, gib.position.z, currentMaze) + 0.02;
+        // Upon touching floor surface: turn directly into blood stain/puddle and remove sphere!
         if (gib.position.y <= gibGroundY) {
-          gib.position.y = gibGroundY;
-          gib.velocity.y = -gib.velocity.y * 0.35;
-          gib.velocity.x *= 0.75;
-          gib.velocity.z *= 0.75;
-
-          if (Math.random() > 0.6) {
-            createFloorBloodDecal(gib.position, 0.22);
-          }
+          createFloorBloodDecal(gib.position, 0.22 + Math.random() * 0.16);
+          scene.remove(gib.mesh);
+          gibsRef.current.splice(i, 1);
+          continue;
         }
 
-        resolveMazeCollision(gib.position, 0.12, currentMaze);
+        // Upon colliding with wall surface: turn into blood stain and remove sphere!
+        const hitWall = resolveMazeCollision(gib.position, 0.08, currentMaze);
+        if (hitWall) {
+          createFloorBloodDecal(gib.position, 0.18 + Math.random() * 0.12);
+          scene.remove(gib.mesh);
+          gibsRef.current.splice(i, 1);
+          continue;
+        }
+
         gib.mesh.position.copy(gib.position);
-        gib.mesh.rotation.x += gib.angularVelocity.x * dt;
-        gib.mesh.rotation.y += gib.angularVelocity.y * dt;
-        gib.mesh.rotation.z += gib.angularVelocity.z * dt;
-        gib.angularVelocity.multiplyScalar(0.96);
       }
 
       // Blood Particle Simulation
@@ -2679,6 +2879,39 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
         onClick={handleCanvasClick}
         className="w-full h-full block cursor-crosshair"
       />
+
+      {/* BACKGROUND INITIALIZING LOADING SCREEN OVERLAY */}
+      {isLoadingScreen && (
+        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-[#0d101a] text-white select-none transition-opacity duration-500">
+          <div className="relative flex flex-col items-center max-w-sm w-full mx-4 p-8 rounded-3xl bg-[#141824]/95 border border-[#55d2f6]/30 shadow-[0_0_50px_rgba(85,210,246,0.18)] backdrop-blur-2xl">
+            {/* Cyber Pulsing Icon */}
+            <div className="relative w-16 h-16 mb-5 flex items-center justify-center rounded-2xl bg-cyan-500/10 border border-cyan-500/40 text-cyan-400">
+              <Sparkles className="w-8 h-8 animate-pulse text-[#55d2f6]" />
+              <div className="absolute inset-0 rounded-2xl border border-cyan-400/40 animate-ping opacity-25" />
+            </div>
+
+            <h2 className="text-xl font-bold tracking-tight text-white mb-1">
+              TOR COMBAT ARENA
+            </h2>
+            <p className="text-xs text-neutral-400 text-center mb-6">
+              Procedural 3D VRM Ragdoll Arena &amp; Combat Simulator
+            </p>
+
+            {/* Progress bar */}
+            <div className="w-full h-2 rounded-full bg-neutral-800 overflow-hidden mb-3 border border-neutral-700/60">
+              <div
+                className="h-full bg-gradient-to-r from-[#55d2f6] via-sky-400 to-emerald-400 transition-all duration-300 ease-out"
+                style={{ width: `${Math.max(5, Math.min(100, loadingProgress))}%` }}
+              />
+            </div>
+
+            <div className="flex items-center justify-between w-full text-[11px] font-mono text-neutral-400">
+              <span className="truncate pr-2">{loadingStatusText}</span>
+              <span className="text-[#55d2f6] font-bold">{loadingProgress}%</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* TOP HEADER */}
       <div className="absolute top-4 left-4 right-4 flex items-center justify-between pointer-events-auto z-20">

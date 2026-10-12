@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import pg from 'pg';
 import crypto from 'crypto';
 import { GoogleGenAI } from '@google/genai';
+import { buildSchema, graphql } from 'graphql';
 
 dotenv.config();
 
@@ -284,6 +285,44 @@ VALUES
   ], 3650, 100000)
 ON CONFLICT (code) DO UPDATE SET
   unlocked_outfit_ids = EXCLUDED.unlocked_outfit_ids;
+
+CREATE TABLE IF NOT EXISTS interviews (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  target_role TEXT NOT NULL,
+  company_name TEXT NOT NULL DEFAULT 'MuxAI',
+  description TEXT,
+  created_by_user_id INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+  created_by_email TEXT,
+  config JSONB NOT NULL DEFAULT '{}',
+  questions JSONB NOT NULL DEFAULT '[]',
+  tasks JSONB NOT NULL DEFAULT '{}',
+  company_qa_knowledge JSONB NOT NULL DEFAULT '[]',
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_interviews_created_by ON interviews(created_by_user_id);
+CREATE INDEX IF NOT EXISTS idx_interviews_active ON interviews(active);
+
+CREATE TABLE IF NOT EXISTS interview_submissions (
+  id TEXT PRIMARY KEY,
+  interview_id TEXT NOT NULL REFERENCES interviews(id) ON DELETE CASCADE,
+  candidate_name TEXT NOT NULL,
+  candidate_email TEXT,
+  status TEXT NOT NULL DEFAULT 'completed',
+  score INTEGER DEFAULT 85,
+  responses JSONB NOT NULL DEFAULT '[]',
+  snapshots JSONB NOT NULL DEFAULT '[]',
+  resume_data JSONB,
+  written_task TEXT,
+  pressure_rating TEXT,
+  ai_evaluation JSONB,
+  completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_interview_subs_interview_id ON interview_submissions(interview_id);
 `;
 
 async function ensureNeonSchema() {
@@ -780,6 +819,304 @@ async function syncUserConversationsAndThemes(params) {
       }
     }
   }
+}
+
+// =====================================================================
+// AUTONOMOUS AI INTERVIEWS & RECRUITING SUITE (NeonDB Persistence)
+// =====================================================================
+const DEFAULT_DEMO_INTERVIEW = {
+  id: 'demo',
+  title: 'Senior Full Stack & AI Systems Engineer',
+  target_role: 'Senior Full Stack & AI Systems Engineer',
+  company_name: 'MuxAI',
+  description: 'Autonomous technical screening with Hana covering core engineering background, complex architecture, written reflection, situational performance, and interactive Q&A.',
+  created_by_user_id: null,
+  created_by_email: 'recruiting@muxai.com',
+  config: {
+    openQuestionSilenceSeconds: 3.0,
+    qaSilenceSeconds: 5.0,
+    activeSilenceVoiceline: "I am assuming you have nothing else to say for now so let's move on to the next step.",
+    showHana3DModel: true,
+    recruiterPersonaName: 'Hana',
+  },
+  questions: [
+    {
+      id: 'q1',
+      phase: 'question_1',
+      prompt: "Let's begin with a quick introduction. Could you tell me a bit about yourself, your background, and what drives your passion for this role?",
+      description: 'Introduction & Background',
+    },
+    {
+      id: 'q2',
+      phase: 'question_2',
+      prompt: "Thank you. Now, could you walk me through a challenging technical problem or project you tackled recently? How did you approach resolving it?",
+      description: 'Technical Problem Solving',
+    },
+  ],
+  tasks: {
+    requireResumeUpload: true,
+    requireWrittenReflection: true,
+    writtenPrompt: 'Please share three things you like about yourself and why. (Min 100 characters)',
+    minWrittenChars: 100,
+    requirePressureRating: true,
+    requireSnapshotCheck: true,
+  },
+  company_qa_knowledge: [],
+  active: true,
+  created_at: '2026-01-01T00:00:00.000Z',
+  updated_at: '2026-01-01T00:00:00.000Z',
+};
+
+const fallbackInterviews = new Map([
+  ['demo', DEFAULT_DEMO_INTERVIEW],
+]);
+const fallbackInterviewSubmissions = new Map();
+
+async function createInterviewInDb(interview) {
+  const pool = await ensureNeonSchema();
+  if (pool) {
+    try {
+      const res = await pool.query(
+        `INSERT INTO interviews (
+          id, title, target_role, company_name, description,
+          created_by_user_id, created_by_email, config, questions, tasks,
+          company_qa_knowledge, active, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
+        ON CONFLICT (id) DO UPDATE SET
+          title = EXCLUDED.title,
+          target_role = EXCLUDED.target_role,
+          company_name = EXCLUDED.company_name,
+          description = EXCLUDED.description,
+          config = EXCLUDED.config,
+          questions = EXCLUDED.questions,
+          tasks = EXCLUDED.tasks,
+          company_qa_knowledge = EXCLUDED.company_qa_knowledge,
+          active = EXCLUDED.active,
+          updated_at = NOW()
+        RETURNING *`,
+        [
+          interview.id,
+          interview.title,
+          interview.target_role,
+          interview.company_name || 'MuxAI',
+          interview.description || '',
+          interview.created_by_user_id || null,
+          interview.created_by_email || null,
+          JSON.stringify(interview.config || {}),
+          JSON.stringify(interview.questions || []),
+          JSON.stringify(interview.tasks || {}),
+          JSON.stringify(interview.company_qa_knowledge || []),
+          interview.active !== false,
+        ]
+      );
+      if (res.rows[0]) {
+        const row = res.rows[0];
+        const record = {
+          id: row.id,
+          title: row.title,
+          target_role: row.target_role,
+          company_name: row.company_name,
+          description: row.description,
+          created_by_user_id: row.created_by_user_id,
+          created_by_email: row.created_by_email,
+          config: typeof row.config === 'string' ? JSON.parse(row.config) : row.config || {},
+          questions: typeof row.questions === 'string' ? JSON.parse(row.questions) : row.questions || [],
+          tasks: typeof row.tasks === 'string' ? JSON.parse(row.tasks) : row.tasks || {},
+          company_qa_knowledge: typeof row.company_qa_knowledge === 'string' ? JSON.parse(row.company_qa_knowledge) : row.company_qa_knowledge || [],
+          active: row.active,
+          created_at: new Date(row.created_at).toISOString(),
+          updated_at: new Date(row.updated_at).toISOString(),
+        };
+        fallbackInterviews.set(record.id, record);
+        return record;
+      }
+    } catch (err) {
+      console.warn('NeonDB createInterview error in api/index.js:', err);
+    }
+  }
+
+  const record = {
+    ...interview,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  fallbackInterviews.set(record.id, record);
+  return record;
+}
+
+async function getInterviewByIdFromDb(id) {
+  const cleanId = String(id || '').trim();
+  if (!cleanId) return null;
+
+  const pool = await ensureNeonSchema();
+  if (pool) {
+    try {
+      const res = await pool.query('SELECT * FROM interviews WHERE id = $1 LIMIT 1', [cleanId]);
+      if (res.rows[0]) {
+        const row = res.rows[0];
+        const record = {
+          id: row.id,
+          title: row.title,
+          target_role: row.target_role,
+          company_name: row.company_name,
+          description: row.description,
+          created_by_user_id: row.created_by_user_id,
+          created_by_email: row.created_by_email,
+          config: typeof row.config === 'string' ? JSON.parse(row.config) : row.config || {},
+          questions: typeof row.questions === 'string' ? JSON.parse(row.questions) : row.questions || [],
+          tasks: typeof row.tasks === 'string' ? JSON.parse(row.tasks) : row.tasks || {},
+          company_qa_knowledge: typeof row.company_qa_knowledge === 'string' ? JSON.parse(row.company_qa_knowledge) : row.company_qa_knowledge || [],
+          active: row.active,
+          created_at: new Date(row.created_at).toISOString(),
+          updated_at: new Date(row.updated_at).toISOString(),
+        };
+        fallbackInterviews.set(record.id, record);
+        return record;
+      }
+    } catch (err) {
+      console.warn('NeonDB getInterview error in api/index.js:', err);
+    }
+  }
+
+  return fallbackInterviews.get(cleanId) || (cleanId === 'demo' ? DEFAULT_DEMO_INTERVIEW : null);
+}
+
+async function listInterviewsFromDb(userId) {
+  const pool = await ensureNeonSchema();
+  if (pool) {
+    try {
+      const query = userId
+        ? 'SELECT * FROM interviews WHERE (created_by_user_id = $1 OR id = \'demo\') AND active = TRUE ORDER BY created_at DESC'
+        : 'SELECT * FROM interviews WHERE active = TRUE ORDER BY created_at DESC';
+      const params = userId ? [userId] : [];
+      const res = await pool.query(query, params);
+      if (res.rows.length > 0) {
+        return res.rows.map((row) => ({
+          id: row.id,
+          title: row.title,
+          target_role: row.target_role,
+          company_name: row.company_name,
+          description: row.description,
+          created_by_user_id: row.created_by_user_id,
+          created_by_email: row.created_by_email,
+          config: typeof row.config === 'string' ? JSON.parse(row.config) : row.config || {},
+          questions: typeof row.questions === 'string' ? JSON.parse(row.questions) : row.questions || [],
+          tasks: typeof row.tasks === 'string' ? JSON.parse(row.tasks) : row.tasks || {},
+          company_qa_knowledge: typeof row.company_qa_knowledge === 'string' ? JSON.parse(row.company_qa_knowledge) : row.company_qa_knowledge || [],
+          active: row.active,
+          created_at: new Date(row.created_at).toISOString(),
+          updated_at: new Date(row.updated_at).toISOString(),
+        }));
+      }
+    } catch (err) {
+      console.warn('NeonDB listInterviews error in api/index.js:', err);
+    }
+  }
+
+  const items = Array.from(fallbackInterviews.values()).filter((i) => i.active);
+  if (!items.some((i) => i.id === 'demo')) {
+    items.unshift(DEFAULT_DEMO_INTERVIEW);
+  }
+  return items;
+}
+
+async function deleteInterviewFromDb(id, userId) {
+  const cleanId = String(id || '').trim();
+  if (!cleanId || cleanId === 'demo') return false;
+
+  const pool = await ensureNeonSchema();
+  if (pool) {
+    try {
+      if (userId) {
+        await pool.query('DELETE FROM interviews WHERE id = $1 AND created_by_user_id = $2', [cleanId, userId]);
+      } else {
+        await pool.query('DELETE FROM interviews WHERE id = $1', [cleanId]);
+      }
+    } catch (err) {
+      console.warn('NeonDB deleteInterview error in api/index.js:', err);
+    }
+  }
+
+  fallbackInterviews.delete(cleanId);
+  return true;
+}
+
+async function submitInterviewSessionToDb(submission) {
+  const pool = await ensureNeonSchema();
+  if (pool) {
+    try {
+      await pool.query(
+        `INSERT INTO interview_submissions (
+          id, interview_id, candidate_name, candidate_email, status, score,
+          responses, snapshots, resume_data, written_task, pressure_rating,
+          ai_evaluation, completed_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
+        ON CONFLICT (id) DO NOTHING`,
+        [
+          submission.id,
+          submission.interview_id,
+          submission.candidate_name,
+          submission.candidate_email || null,
+          submission.status || 'completed',
+          submission.score ?? 85,
+          JSON.stringify(submission.responses || []),
+          JSON.stringify(submission.snapshots || []),
+          submission.resume_data ? JSON.stringify(submission.resume_data) : null,
+          submission.written_task || '',
+          submission.pressure_rating || '',
+          submission.ai_evaluation ? JSON.stringify(submission.ai_evaluation) : null,
+        ]
+      );
+    } catch (err) {
+      console.warn('NeonDB submitInterviewSession error in api/index.js:', err);
+    }
+  }
+
+  const list = fallbackInterviewSubmissions.get(submission.interview_id) || [];
+  list.unshift(submission);
+  fallbackInterviewSubmissions.set(submission.interview_id, list);
+  return submission;
+}
+
+async function listInterviewSubmissionsFromDb(interviewId) {
+  const pool = await ensureNeonSchema();
+  if (pool) {
+    try {
+      const query = interviewId
+        ? 'SELECT * FROM interview_submissions WHERE interview_id = $1 ORDER BY completed_at DESC LIMIT 50'
+        : 'SELECT * FROM interview_submissions ORDER BY completed_at DESC LIMIT 50';
+      const params = interviewId ? [interviewId] : [];
+      const res = await pool.query(query, params);
+      if (res.rows.length > 0) {
+        return res.rows.map((row) => ({
+          id: row.id,
+          interview_id: row.interview_id,
+          candidate_name: row.candidate_name,
+          candidate_email: row.candidate_email,
+          status: row.status,
+          score: Number(row.score) || 85,
+          responses: typeof row.responses === 'string' ? JSON.parse(row.responses) : row.responses || [],
+          snapshots: typeof row.snapshots === 'string' ? JSON.parse(row.snapshots) : row.snapshots || [],
+          resume_data: typeof row.resume_data === 'string' ? JSON.parse(row.resume_data) : row.resume_data,
+          written_task: row.written_task,
+          pressure_rating: row.pressure_rating,
+          ai_evaluation: typeof row.ai_evaluation === 'string' ? JSON.parse(row.ai_evaluation) : row.ai_evaluation,
+          completed_at: new Date(row.completed_at).toISOString(),
+        }));
+      }
+    } catch (err) {
+      console.warn('NeonDB listInterviewSubmissions error in api/index.js:', err);
+    }
+  }
+
+  if (interviewId) {
+    return fallbackInterviewSubmissions.get(interviewId) || [];
+  }
+  const all = [];
+  for (const list of fallbackInterviewSubmissions.values()) {
+    all.push(...list);
+  }
+  return all.sort((a, b) => Date.parse(b.completed_at) - Date.parse(a.completed_at));
 }
 
 // =====================================================================
@@ -1653,6 +1990,135 @@ router.post('/account/sync', async (req, res) => {
 });
 
 // =====================================================================
+// Autonomous AI Interviews & NeonDB Recruiting Suite Endpoints
+// =====================================================================
+
+// Create a new interview
+router.post('/interview/create', async (req, res) => {
+  try {
+    const body = req.body || {};
+    if (!body.title || !body.target_role) {
+      return res.status(400).json({ ok: false, error: 'Interview title and target role are required.' });
+    }
+    const id = body.id || `iv_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+    const record = {
+      id,
+      title: String(body.title).trim(),
+      target_role: String(body.target_role).trim(),
+      company_name: String(body.company_name || 'MuxAI').trim(),
+      description: String(body.description || '').trim(),
+      created_by_user_id: body.created_by_user_id ? Number(body.created_by_user_id) : null,
+      created_by_email: body.created_by_email ? String(body.created_by_email).trim() : null,
+      config: body.config || {},
+      questions: Array.isArray(body.questions) ? body.questions : [],
+      tasks: body.tasks || {},
+      company_qa_knowledge: Array.isArray(body.company_qa_knowledge) ? body.company_qa_knowledge : [],
+      active: body.active !== false,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    const saved = await createInterviewInDb(record);
+    return res.json({ ok: true, interview: saved });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Failed to create interview';
+    return res.status(500).json({ ok: false, error: message });
+  }
+});
+
+// List all active interviews
+router.get('/interview/list', async (req, res) => {
+  try {
+    const userId = req.query.userId ? Number(req.query.userId) : undefined;
+    const interviews = await listInterviewsFromDb(userId);
+    return res.json({ ok: true, interviews });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Failed to list interviews';
+    return res.status(500).json({ ok: false, error: message, interviews: [DEFAULT_DEMO_INTERVIEW] });
+  }
+});
+
+// List interview submissions / history
+router.get(['/interview-history', '/interview/history', '/interview/submissions'], async (req, res) => {
+  try {
+    const interviewId = req.query.interviewId ? String(req.query.interviewId).trim() : undefined;
+    const submissions = await listInterviewSubmissionsFromDb(interviewId);
+    return res.json({ ok: true, submissions });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Failed to fetch interview history';
+    return res.status(500).json({ ok: false, error: message, submissions: [] });
+  }
+});
+
+// Submit a completed candidate session for an interview
+router.post(['/interview/:id/submit', '/interview/submit'], async (req, res) => {
+  try {
+    const rawId = req.params.id || req.body?.interview_id || 'demo';
+    const interviewId = String(rawId).trim();
+    const body = req.body || {};
+    const subId = body.id || `sub_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+    const submission = {
+      id: subId,
+      interview_id: interviewId,
+      candidate_name: String(body.candidate_name || 'Candidate').trim(),
+      candidate_email: body.candidate_email ? String(body.candidate_email).trim() : undefined,
+      status: body.status || 'completed',
+      score: typeof body.score === 'number' ? body.score : 85,
+      responses: Array.isArray(body.responses) ? body.responses : [],
+      snapshots: Array.isArray(body.snapshots) ? body.snapshots : [],
+      resume_data: body.resume_data || null,
+      written_task: body.written_task || '',
+      pressure_rating: body.pressure_rating || '',
+      ai_evaluation: body.ai_evaluation || undefined,
+      completed_at: new Date().toISOString(),
+    };
+
+    const saved = await submitInterviewSessionToDb(submission);
+    return res.json({ ok: true, submission: saved });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Failed to submit interview session';
+    return res.status(500).json({ ok: false, error: message });
+  }
+});
+
+// Get a single interview by ID
+router.get('/interview/:id', async (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    if (!id) {
+      return res.status(400).json({ ok: false, error: 'Interview ID is required' });
+    }
+    const interview = await getInterviewByIdFromDb(id);
+    if (!interview) {
+      if (id === 'demo') {
+        return res.json({ ok: true, interview: DEFAULT_DEMO_INTERVIEW });
+      }
+      return res.status(404).json({ ok: false, error: `Interview "${id}" not found` });
+    }
+    return res.json({ ok: true, interview });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Failed to fetch interview';
+    return res.status(500).json({ ok: false, error: message });
+  }
+});
+
+// Delete an interview by ID
+router.delete('/interview/:id', async (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    if (!id || id === 'demo') {
+      return res.status(400).json({ ok: false, error: 'Cannot delete demo interview template.' });
+    }
+    const userId = req.body?.userId ? Number(req.body.userId) : undefined;
+    const success = await deleteInterviewFromDb(id, userId);
+    return res.json({ ok: success });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Failed to delete interview';
+    return res.status(500).json({ ok: false, error: message });
+  }
+});
+
+// =====================================================================
 // Self-Hosted Zero-API WebRTC & Real-Time Telephone PBX Switchboard
 // =====================================================================
 const registeredPbxLines = new Map();
@@ -2221,6 +2687,465 @@ router.get('/caller/webhooks/:platform', (req, res) => {
 
 router.post('/caller/webhooks/:platform', (req, res) => {
   return res.json({ ok: true, received: true, platform: req.params.platform });
+});
+
+// =====================================================================
+// GRAPHQL SCHEMA & RESOLVERS FOR THIRD-PARTY CLIENTS
+// =====================================================================
+const graphqlSchema = buildSchema(`
+  type VRMModel {
+    url: String!
+    defaultOutfitId: String!
+    candidateUrls: [String!]!
+    activeFile: String!
+    outfits: [OutfitItem!]!
+  }
+
+  type OutfitItem {
+    id: String!
+    name: String!
+    fileName: String!
+    modelUrl: String!
+    fallbackModelUrl: String!
+    isPremium: Boolean!
+    isDefault: Boolean
+    isSecret: Boolean
+  }
+
+  type AnimationAsset {
+    type: String!
+    url: String!
+    candidateUrls: [String!]!
+    description: String!
+    loop: Boolean!
+  }
+
+  type EmotionDef {
+    name: String!
+    vrmMorph: String!
+    description: String!
+    valence: String!
+  }
+
+  type VisemeMapping {
+    phonemes: [String!]!
+    viseme: String!
+    vrmMouthMorph: String!
+  }
+
+  type VoiceEngineConfig {
+    lang: String!
+    rate: Float!
+    pitch: Float!
+    preferredVoices: [String!]!
+    visemes: [VisemeMapping!]!
+    acousticFilter: String!
+    maleKeywords: [String!]!
+    femaleKeywords: [String!]!
+  }
+
+  type LlmModelInfo {
+    id: String!
+    name: String!
+    tagline: String!
+    family: String!
+    description: String!
+    speedRating: String!
+    approxParams: String
+    sizeLabel: String
+    defaultDtype: String
+    hfRepo: String
+    isSmallModel: Boolean
+    inferenceType: String!
+    streamingEndpoint: String!
+  }
+
+  type PersonaProfile {
+    name: String!
+    alternateName: String
+    handle: String!
+    bio: String!
+    avatarUrl: String!
+    vrmModelUrl: String!
+    websiteUrl: String!
+    systemPromptAbridged: String!
+  }
+
+  type McpManifest {
+    name: String!
+    version: String!
+    protocolVersion: String!
+    tools: [String!]!
+    resources: [String!]!
+    prompts: [String!]!
+  }
+
+  type AvatarActionPayload {
+    type: String!
+    text: String!
+    emotion: String!
+    animation: String!
+    timestamp: Float!
+  }
+
+  type AvatarActionResult {
+    success: Boolean!
+    message: String!
+    activeSubscribers: Int!
+    event: AvatarActionPayload
+  }
+
+  type EmotionAnalysisResult {
+    text: String!
+    emotion: String!
+    method: String!
+  }
+
+  type PhonemeCue {
+    word: String!
+    viseme: String!
+    vrmMorph: String!
+    intensity: Float!
+  }
+
+  type PhonemeAnalysisResult {
+    text: String!
+    cues: [PhonemeCue!]!
+  }
+
+  type Query {
+    avatar(outfitId: String): VRMModel!
+    outfits: [OutfitItem!]!
+    animations(type: String): [AnimationAsset!]!
+    emotions: [EmotionDef!]!
+    voiceEngine: VoiceEngineConfig!
+    activeLlm(modelId: String): [LlmModelInfo!]!
+    persona: PersonaProfile!
+    mcpManifest: McpManifest!
+  }
+
+  type Mutation {
+    setAvatarAction(action: String, text: String, emotion: String, animation: String): AvatarActionResult!
+    detectEmotion(text: String!): EmotionAnalysisResult!
+    synthesizePhonemes(text: String!): PhonemeAnalysisResult!
+  }
+`);
+
+const WARDROBE_OUTFITS_LIST = [
+  { id: 'mint-maid-apron', name: 'Mint Maid Apron', fileName: 'hana_v1.3_vrm1.vrm', modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.3_vrm1.vrm`, fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.3_vrm1.vrm`, isPremium: false, isDefault: true },
+  { id: 'candy-maid-apron', name: 'Candy Maid Apron', fileName: 'hana_v1.3_outfit2.vrm', modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.3_outfit2.vrm`, fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.3_outfit2.vrm`, isPremium: false },
+  { id: 'imperial-noblewoman', name: 'Imperial Noblewoman', fileName: 'hana_v1.3_outfit3.vrm', modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.3_outfit3.vrm`, fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.3_outfit3.vrm`, isPremium: true },
+  { id: 'lavender-grace-dress', name: 'Lavender Grace Dress', fileName: 'hana_v1.3_outfit4.vrm', modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.3_outfit4.vrm`, fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.3_outfit4.vrm`, isPremium: true },
+  { id: 'sakura-spring', name: 'Sakura Spring', fileName: 'hana_v1.3_outfit5.vrm', modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.3_outfit5.vrm`, fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.3_outfit5.vrm`, isPremium: false },
+  { id: 'school-uniform', name: 'School Uniform', fileName: 'hana_v1.3_outfit6.vrm', modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.3_outfit6.vrm`, fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.3_outfit6.vrm`, isPremium: false },
+  { id: 'streetlit-hoodie', name: 'Streetlit Hoodie', fileName: 'hana_v1.3_outfit7.vrm', modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.3_outfit7.vrm`, fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.3_outfit7.vrm`, isPremium: false },
+  { id: 'mux-future', name: 'Mux Future', fileName: 'hana_v1.3_outfit8.vrm', modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.3_outfit8.vrm`, fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.3_outfit8.vrm`, isPremium: true },
+  { id: 'cozy-canadian-winter', name: 'Cozy Canadian Winter', fileName: 'hana_v1.3_outfit9.vrm', modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.3_outfit9.vrm`, fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.3_outfit9.vrm`, isPremium: false },
+  { id: 'memorable-night', name: 'Memorable Night', fileName: 'hana_v1.3_outfit10.vrm', modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.3_outfit10.vrm`, fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.3_outfit10.vrm`, isPremium: true },
+];
+
+const graphqlRoot = {
+  avatar: ({ outfitId }) => {
+    const outfit = outfitId ? WARDROBE_OUTFITS_LIST.find((o) => o.id === outfitId) : WARDROBE_OUTFITS_LIST[0];
+    const fileName = outfit?.fileName || 'hana_v1.3_vrm1.vrm';
+    return {
+      url: `/api/vrm?file=${encodeURIComponent(fileName)}`,
+      defaultOutfitId: 'mint-maid-apron',
+      candidateUrls: [
+        `/api/vrm?file=${encodeURIComponent(fileName)}`,
+        `${MODEL_SOURCE_DOMAIN}/${fileName}`,
+        `${MODEL_FALLBACK_DOMAIN}/${fileName}`,
+      ],
+      activeFile: fileName,
+      outfits: WARDROBE_OUTFITS_LIST,
+    };
+  },
+  outfits: () => WARDROBE_OUTFITS_LIST,
+  animations: ({ type }) => {
+    const list = [
+      { type: 'idle', url: '/api/animation/idle', candidateUrls: ['/api/animation/idle', `${MODEL_SOURCE_DOMAIN}/mixamo_idle.fbx`], description: 'Subtle breathing and natural idling loop', loop: true },
+      { type: 'walk', url: '/api/animation/walk', candidateUrls: ['/api/animation/walk', `${MODEL_SOURCE_DOMAIN}/mixamo_walk.fbx`], description: 'Forward walking step loop', loop: true },
+      { type: 'wave', url: '/api/animation/wave', candidateUrls: ['/api/animation/wave', `${MODEL_SOURCE_DOMAIN}/mixamo_wave.fbx`], description: 'Friendly right-hand greeting wave gesture', loop: false },
+      { type: 'fall', url: '/api/animation/fall', candidateUrls: ['/api/animation/fall', `${MODEL_SOURCE_DOMAIN}/mixamo_fall.fbx`], description: 'Tumble backwards onto floor impact physics', loop: false },
+      { type: 'getup', url: '/api/animation/getup', candidateUrls: ['/api/animation/getup', `${MODEL_SOURCE_DOMAIN}/mixamo_getup.fbx`], description: 'Recovery and standing back up animation', loop: false },
+      { type: 'yawn', url: '/api/animation/yawn', candidateUrls: ['/api/animation/yawn', `${MODEL_SOURCE_DOMAIN}/mixamo_yawn.fbx`], description: 'Drowsy yawn and subtle arm stretch sequence', loop: false },
+      { type: 'wait', url: '/api/animation/wait', candidateUrls: ['/api/animation/wait', `${MODEL_SOURCE_DOMAIN}/mixamo_wait.fbx`], description: 'Patient waiting posture', loop: false },
+      { type: 'jumpingjacks', url: '/api/animation/wait?file=mixamo_.jumpingjacks.fbx', candidateUrls: ['/api/animation/wait?file=mixamo_.jumpingjacks.fbx', `${MODEL_SOURCE_DOMAIN}/mixamo_jumpingjacks.fbx`], description: 'Energetic full-body jumping jacks exercise', loop: true },
+    ];
+    if (type) {
+      return list.filter((a) => a.type.toLowerCase() === type.toLowerCase());
+    }
+    return list;
+  },
+  emotions: () => [
+    { name: 'neutral', vrmMorph: 'neutral', description: 'Calm resting facial expression', valence: 'neutral' },
+    { name: 'happy', vrmMorph: 'happy', description: 'Warm tender smile, slight eye crinkle', valence: 'positive' },
+    { name: 'smug', vrmMorph: 'relaxed', description: 'Playful sly smirk, confident glance', valence: 'positive' },
+    { name: 'sad', vrmMorph: 'sad', description: 'Softly lowered eyelids, downcast gentle mouth', valence: 'negative' },
+    { name: 'angry', vrmMorph: 'angry', description: 'Slightly furrowed brow and cute pout', valence: 'negative' },
+    { name: 'surprised', vrmMorph: 'surprised', description: 'Wide ocular gaze and parted lips', valence: 'heightened' },
+  ],
+  voiceEngine: () => ({
+    lang: 'en-US',
+    rate: 1.05,
+    pitch: 1.25,
+    preferredVoices: ['Google UK English Female', 'Microsoft Zira', 'Samantha'],
+    visemes: [
+      { phonemes: ['a', 'ah', 'aa'], viseme: 'aa', vrmMouthMorph: 'aa' },
+      { phonemes: ['o', 'oh', 'aw'], viseme: 'oh', vrmMouthMorph: 'oh' },
+      { phonemes: ['u', 'oo', 'w', 'ou'], viseme: 'ou', vrmMouthMorph: 'ou' },
+      { phonemes: ['i', 'y', 'ih'], viseme: 'ih', vrmMouthMorph: 'ih' },
+      { phonemes: ['e', 'ee', 'ea'], viseme: 'ee', vrmMouthMorph: 'ee' },
+    ],
+    acousticFilter: 'Web Audio API BiquadFilter low-pass warm harmonic smoothing',
+    maleKeywords: ['david', 'george', 'mark', 'male'],
+    femaleKeywords: ['zira', 'samantha', 'victoria', 'female'],
+  }),
+  activeLlm: ({ modelId }) => {
+    const list = [
+      { id: 'smollm2-135m', name: 'Tiny Brain', tagline: '135M params', family: 'browser-slm', description: 'Runs 100% in browser', speedRating: 'Ultra-Fast', inferenceType: 'in-browser-onnx', streamingEndpoint: 'client-transformers-js' },
+      { id: 'llama-3.2-1b', name: 'Meta Brain', tagline: '1.2B params', family: 'browser-slm', description: 'Meta Llama 3.2 lightweight reasoning', speedRating: 'Fast', inferenceType: 'in-browser-onnx', streamingEndpoint: 'client-transformers-js' },
+      { id: 'gemini-api', name: 'Gemini API', tagline: 'Cloud model', family: 'cloud-api', description: 'Google Gemini 2.5 Flash', speedRating: 'Real-time', inferenceType: 'cloud-api', streamingEndpoint: '/api/chat' },
+      { id: 'muxai-ollama', name: 'MuxAI Brain', tagline: 'Self-hosted', family: 'ollama', description: 'Decentralized Ollama runner', speedRating: 'Fast', inferenceType: 'ollama-server', streamingEndpoint: '/api/ollama/chat' },
+    ];
+    if (modelId) {
+      return list.filter((m) => m.id === modelId);
+    }
+    return list;
+  },
+  persona: () => ({
+    name: 'Hana',
+    alternateName: 'Yana',
+    handle: '@hana_muxai',
+    bio: 'a flower so bright... her petals sparkled with light 🩵',
+    avatarUrl: DEFAULT_USER_AVATAR_URL,
+    vrmModelUrl: 'https://ai.mux8.com/hana_v1.3_vrm1.vrm',
+    websiteUrl: 'https://muxai.vercel.app',
+    systemPromptAbridged: DEFAULT_SYSTEM_PROMPT.slice(0, 300),
+  }),
+  mcpManifest: () => ({
+    name: 'ai-smash-mcp',
+    version: '1.0.0',
+    protocolVersion: '2024-11-05',
+    tools: ['avatar_act', 'avatar_say', 'avatar_emotion', 'avatar_animation', 'web_search', 'wikipedia', 'weather_info', 'location_info', 'device_info', 'ask_persona'],
+    resources: ['resource://persona/profile', 'resource://app/info'],
+    prompts: ['prompt://persona/chat'],
+  }),
+  setAvatarAction: ({ action, text, emotion, animation }) => {
+    return {
+      success: true,
+      message: 'Avatar action executed',
+      activeSubscribers: 1,
+      event: {
+        type: action || 'speak',
+        text: text || '',
+        emotion: emotion || 'happy',
+        animation: animation || 'wave',
+        timestamp: Date.now(),
+      },
+    };
+  },
+  detectEmotion: ({ text }) => {
+    const lower = (text || '').toLowerCase();
+    let emotion = 'neutral';
+    if (lower.includes('happy') || lower.includes('love') || lower.includes('great') || lower.includes('yay') || lower.includes('awesome')) emotion = 'happy';
+    else if (lower.includes('sad') || lower.includes('cry') || lower.includes('miss') || lower.includes('sorry')) emotion = 'sad';
+    else if (lower.includes('angry') || lower.includes('hate') || lower.includes('mad')) emotion = 'angry';
+    else if (lower.includes('wow') || lower.includes('omg') || lower.includes('whoa')) emotion = 'surprised';
+    return { text, emotion, method: 'sentiment-algorithm' };
+  },
+  synthesizePhonemes: ({ text }) => {
+    const words = (text || '').trim().split(/\s+/);
+    const cues = words.slice(0, 30).map((word) => {
+      const lower = word.toLowerCase();
+      let viseme = 'aa';
+      let morph = 'aa';
+      let intensity = 0.25;
+      if (/[ao]/.test(lower)) {
+        if (lower.includes('o') || lower.includes('aw')) { viseme = 'oh'; morph = 'oh'; intensity = 0.32; }
+        else { viseme = 'aa'; morph = 'aa'; intensity = 0.35; }
+      } else if (/[iuwy]/.test(lower)) {
+        if (lower.includes('u') || lower.includes('oo') || lower.includes('w')) { viseme = 'ou'; morph = 'ou'; intensity = 0.25; }
+        else { viseme = 'ih'; morph = 'ih'; intensity = 0.22; }
+      } else if (/[e]/.test(lower)) { viseme = 'ee'; morph = 'ee'; intensity = 0.25; }
+      return { word, viseme, vrmMorph: morph, intensity };
+    });
+    return { text, cues };
+  },
+};
+
+// GraphQL execution endpoint (POST /api/graphql)
+router.post('/graphql', async (req, res) => {
+  try {
+    const { query, variables, operationName } = req.body || {};
+    if (!query || typeof query !== 'string') {
+      return res.status(400).json({ errors: [{ message: 'GraphQL "query" string is required in request body.' }] });
+    }
+
+    const result = await graphql({
+      schema: graphqlSchema,
+      source: query,
+      rootValue: graphqlRoot,
+      variableValues: variables,
+      operationName,
+    });
+
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.json(result);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'GraphQL execution failure';
+    res.status(500).json({ errors: [{ message: msg }] });
+  }
+});
+
+// GraphQL GET endpoint
+router.get('/graphql', async (req, res) => {
+  try {
+    const rawQuery = typeof req.query.query === 'string' ? req.query.query : '';
+    if (rawQuery) {
+      let variables = undefined;
+      if (typeof req.query.variables === 'string') {
+        try { variables = JSON.parse(req.query.variables); } catch {}
+      }
+      const result = await graphql({
+        schema: graphqlSchema,
+        source: rawQuery,
+        rootValue: graphqlRoot,
+        variableValues: variables,
+      });
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      return res.json(result);
+    }
+
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.json({
+      status: 'ok',
+      endpoint: '/api/graphql',
+      description: 'Hana Universal 3D Avatar, Emotion, Voice & LLM GraphQL Endpoint',
+      sampleQuery: `{ avatar { url defaultOutfitId activeFile outfits { id name } } animations { type url loop } emotions { name vrmMorph } voiceEngine { lang rate pitch preferredVoices } activeLlm { id name family streamingEndpoint } }`,
+      docsUrl: '/docs/api/third-party-avatar',
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'GraphQL GET failure';
+    res.status(500).json({ errors: [{ message: msg }] });
+  }
+});
+
+// REST Built-in Tool Calling Endpoints
+router.get('/tools/web-search', async (req, res) => {
+  try {
+    const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    const limit = Math.min(Math.max(parseInt(String(req.query.limit || '5'), 10), 1), 10);
+    if (!query) return res.json({ query: '', results: [], source: 'empty' });
+
+    const ddgUrl = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
+    const ddgResp = await fetch(ddgUrl);
+    const results = [];
+    if (ddgResp.ok) {
+      const data = await ddgResp.json().catch(() => ({}));
+      if (data.AbstractText) {
+        results.push({ title: data.Heading || query, snippet: data.AbstractText, url: data.AbstractURL || `https://duckduckgo.com/?q=${encodeURIComponent(query)}` });
+      }
+      if (Array.isArray(data.RelatedTopics)) {
+        for (const topic of data.RelatedTopics) {
+          if (topic.Text && topic.FirstURL) {
+            results.push({ title: topic.Text.split(' - ')[0] || query, snippet: topic.Text, url: topic.FirstURL });
+            if (results.length >= limit) break;
+          }
+        }
+      }
+    }
+    return res.json({ query, results: results.slice(0, limit), source: 'web_search_engine' });
+  } catch (err) {
+    return res.status(500).json({ error: err.message, results: [] });
+  }
+});
+
+router.get('/tools/wikipedia', async (req, res) => {
+  try {
+    const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    if (!query) return res.status(400).json({ error: 'Search query "q" parameter is required' });
+
+    const searchUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&utf8=&format=json&origin=*`;
+    const searchRes = await fetch(searchUrl);
+    const searchData = await searchRes.json().catch(() => ({}));
+    const topHit = searchData.query?.search?.[0];
+    if (!topHit) return res.json({ found: false, title: query, extract: `No Wikipedia article found matching "${query}".`, url: 'https://en.wikipedia.org' });
+
+    const summaryUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(topHit.title.replace(/\s+/g, '_'))}`;
+    const summaryRes = await fetch(summaryUrl);
+    if (summaryRes.ok) {
+      const data = await summaryRes.json();
+      return res.json({
+        found: true,
+        title: data.title || topHit.title,
+        description: data.description,
+        extract: data.extract || topHit.snippet,
+        url: data.content_urls?.desktop?.page || `https://en.wikipedia.org/wiki/${encodeURIComponent(topHit.title.replace(/\s+/g, '_'))}`,
+        thumbnail: data.thumbnail?.source,
+      });
+    }
+    return res.json({ found: true, title: topHit.title, extract: (topHit.snippet || '').replace(/<[^>]*>?/gm, ''), url: `https://en.wikipedia.org/wiki/${encodeURIComponent(topHit.title.replace(/\s+/g, '_'))}` });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/tools/weather', async (req, res) => {
+  try {
+    const city = typeof req.query.city === 'string' ? req.query.city.trim() : '';
+    let lat = req.query.lat ? parseFloat(String(req.query.lat)) : undefined;
+    let lon = req.query.lon ? parseFloat(String(req.query.lon)) : undefined;
+    let locationName = city || 'Custom Location';
+
+    if (city && (lat === undefined || lon === undefined)) {
+      const geoUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=en&format=json`;
+      const geoRes = await fetch(geoUrl);
+      if (geoRes.ok) {
+        const geoData = await geoRes.json();
+        if (Array.isArray(geoData.results) && geoData.results.length > 0) {
+          const hit = geoData.results[0];
+          lat = hit.latitude;
+          lon = hit.longitude;
+          locationName = `${hit.name}, ${hit.country || ''}`.replace(/,\s*$/, '');
+        }
+      }
+    }
+
+    if (lat === undefined || lon === undefined) {
+      lat = 35.6762;
+      lon = 139.6503;
+      locationName = 'Tokyo, Japan';
+    }
+
+    const forecastUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto`;
+    const fRes = await fetch(forecastUrl);
+    if (!fRes.ok) return res.status(502).json({ error: 'Failed to fetch weather forecast' });
+    const data = await fRes.json();
+    return res.json({ location: locationName, latitude: lat, longitude: lon, current: data.current, daily: data.daily });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/mcp', (_req, res) => {
+  return res.json({
+    status: 'ok',
+    name: 'ai-smash-mcp',
+    version: '1.0.0',
+    protocolVersion: '2024-11-05',
+    transport: 'sse',
+    sseEndpoint: '/api/mcp/sse',
+    messagesEndpoint: '/api/mcp/messages',
+    capabilities: {
+      tools: ['avatar_act', 'avatar_say', 'avatar_emotion', 'avatar_animation', 'web_search', 'wikipedia', 'weather_info', 'location_info', 'device_info', 'ask_persona'],
+      resources: ['resource://persona/profile', 'resource://app/info'],
+      prompts: ['prompt://persona/chat'],
+    },
+  });
 });
 
 apiApp.use('/api', router);
