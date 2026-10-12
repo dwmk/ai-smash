@@ -1,36 +1,41 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { VRMLoaderPlugin, VRMUtils, VRM } from '@pixiv/three-vrm';
+import { retargetAnimation } from 'vrm-mixamo-retarget';
+import {
+  ArrowLeft,
+  Volume2,
+  VolumeX,
+  Activity,
+  Plus,
+  Sparkles,
+  Info,
+  X,
+  Search,
+  Check,
+  Skull,
+  Heart,
+  Hand,
+} from 'lucide-react';
 import {
   ALL_WARDROBE_OUTFITS,
   MODEL_SOURCE_DOMAIN,
   MODEL_FALLBACK_DOMAIN,
 } from '../constants';
 import { WardrobeOutfit } from '../types';
-import {
-  Skull,
-  Crosshair,
-  Volume2,
-  VolumeX,
-  RotateCcw,
-  Plus,
-  Trash2,
-  Search,
-  X,
-  Sparkles,
-  Activity,
-  Layers,
-  ArrowLeft,
-  Upload,
-  Info,
-  Check,
-  Loader2,
-} from 'lucide-react';
 
 // ============================================================================
-// Types & Data Structures
+// Types & Definitions
 // ============================================================================
+export interface TorGamePageProps {
+  onBackToChat: () => void;
+  onNavigateHome?: () => void;
+  onNavigateToAct?: () => void;
+}
+
+export type BloodStyle = 'crimson' | 'neon' | 'toxic';
 
 export type BodyPartKey =
   | 'head'
@@ -39,12 +44,12 @@ export type BodyPartKey =
   | 'spine'
   | 'hips'
   | 'leftUpperArm'
-  | 'leftLowerArm'
   | 'rightUpperArm'
+  | 'leftLowerArm'
   | 'rightLowerArm'
   | 'leftUpperLeg'
-  | 'leftLowerLeg'
   | 'rightUpperLeg'
+  | 'leftLowerLeg'
   | 'rightLowerLeg';
 
 export interface NPCPartState {
@@ -53,7 +58,29 @@ export interface NPCPartState {
   isDetached: boolean;
   boneNode: THREE.Object3D | null;
   stumpCap: THREE.Mesh | null;
-  fountainTimer: number; // Seconds remaining for arterial blood fountain
+  fountainTimer: number;
+}
+
+export interface RagdollParticle {
+  name: BodyPartKey;
+  boneNode: THREE.Object3D | null;
+  position: THREE.Vector3;
+  prevPosition: THREE.Vector3;
+  radius: number;
+}
+
+export interface RagdollStick {
+  p1: RagdollParticle;
+  p2: RagdollParticle;
+  restLength: number;
+}
+
+export interface HairBoneTrack {
+  bone: THREE.Object3D;
+  initialRot: THREE.Euler;
+  swayX: number;
+  swayZ: number;
+  phase: number;
 }
 
 export interface NPCEntity {
@@ -65,26 +92,37 @@ export interface NPCEntity {
   velocity: THREE.Vector3;
   angularVelocity: THREE.Vector3;
   isRagdoll: boolean;
+  isDead: boolean;
   isObliterated: boolean;
-  health: number; // 0 to 100
+  health: number;
   bloodStainsCount: number;
   rootGroup: THREE.Group;
   vrm: VRM | null;
   isLoading: boolean;
   parts: Record<BodyPartKey, NPCPartState>;
   proxyColliders: THREE.Mesh[];
-  staggerSpring: number; // Spring tension recovering to standing
+  staggerSpring: number;
   staggerVelocity: number;
+  wanderState: 'idle' | 'walk';
+  wanderTimer: number;
+  wanderDir: THREE.Vector3;
+  hasTakenDamage: boolean;
+  dyingTimer: number;
+  mixer: THREE.AnimationMixer | null;
+  currentActionName: string | null;
+  ragdollParticles: RagdollParticle[];
+  ragdollSticks: RagdollStick[];
+  hairBones: HairBoneTrack[];
 }
 
 export interface GibEntity {
-  mesh: THREE.Object3D;
+  mesh: THREE.Mesh;
   position: THREE.Vector3;
   velocity: THREE.Vector3;
   angularVelocity: THREE.Vector3;
   life: number;
   maxLife: number;
-  isFleshCap: boolean;
+  isFleshCap?: boolean;
 }
 
 export interface BloodParticle {
@@ -96,27 +134,10 @@ export interface BloodParticle {
   color: THREE.Color;
 }
 
-export type BloodStyle = 'crimson' | 'neon' | 'toxic';
+// Player Default Outfit
+const PLAYER_OUTFIT: WardrobeOutfit = ALL_WARDROBE_OUTFITS.find((o) => o.id === 'pain-giver');
 
-interface TorGamePageProps {
-  onBackToChat?: () => void;
-  onNavigateHome?: () => void;
-  onNavigateToAct?: () => void;
-}
-
-// Player avatar outfit: "hana_v1.2_darkpain_vrm1"
-const PLAYER_OUTFIT: WardrobeOutfit =
-  ALL_WARDROBE_OUTFITS.find((o) => o.fileName.includes('darkpain')) || {
-    id: 'pain-giver',
-    name: 'Dominant Top',
-    fileName: 'hana_v1.2_darkpain_vrm1.vrm',
-    modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.2_darkpain_vrm1.vrm`,
-    fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.2_darkpain_vrm1.vrm`,
-    isPremium: false,
-    isSecret: true,
-  };
-
-// Colors for blood themes
+// Blood liquid colors
 const BLOOD_COLORS: Record<BloodStyle, { base: number; drip: number; mist: number; name: string }> = {
   crimson: {
     base: 0x880808,
@@ -128,7 +149,7 @@ const BLOOD_COLORS: Record<BloodStyle, { base: number; drip: number; mist: numbe
     base: 0xff0066,
     drip: 0xaa00aa,
     mist: 0xff3399,
-    name: 'Neon Cyber Fantasy',
+    name: 'Neon Cyber',
   },
   toxic: {
     base: 0x39ff14,
@@ -138,41 +159,205 @@ const BLOOD_COLORS: Record<BloodStyle, { base: number; drip: number; mist: numbe
   },
 };
 
-// Collider mapping definitions for real VRM humanoid bones
+// Collider definitions for VRM humanoid bones
 const VRM_COLLIDER_DEFS: Array<{
   boneKey: BodyPartKey;
   vrmBone: string;
   geo: THREE.BufferGeometry;
   offset?: [number, number, number];
   stumpRadius: number;
+  displayName: string;
 }> = [
-  { boneKey: 'head', vrmBone: 'head', geo: new THREE.SphereGeometry(0.16, 8, 8), offset: [0, 0.08, 0], stumpRadius: 0.07 },
-  { boneKey: 'neck', vrmBone: 'neck', geo: new THREE.SphereGeometry(0.09, 8, 8), offset: [0, 0.04, 0], stumpRadius: 0.06 },
-  { boneKey: 'chest', vrmBone: 'chest', geo: new THREE.BoxGeometry(0.28, 0.24, 0.2), offset: [0, 0.06, 0], stumpRadius: 0.12 },
-  { boneKey: 'spine', vrmBone: 'spine', geo: new THREE.SphereGeometry(0.18, 8, 8), offset: [0, 0, 0], stumpRadius: 0.11 },
-  { boneKey: 'hips', vrmBone: 'hips', geo: new THREE.SphereGeometry(0.22, 8, 8), offset: [0, -0.04, 0], stumpRadius: 0.14 },
-  { boneKey: 'leftUpperArm', vrmBone: 'leftUpperArm', geo: new THREE.CylinderGeometry(0.06, 0.06, 0.24, 6), offset: [0, -0.1, 0], stumpRadius: 0.05 },
-  { boneKey: 'rightUpperArm', vrmBone: 'rightUpperArm', geo: new THREE.CylinderGeometry(0.06, 0.06, 0.24, 6), offset: [0, -0.1, 0], stumpRadius: 0.05 },
-  { boneKey: 'leftLowerArm', vrmBone: 'leftLowerArm', geo: new THREE.CylinderGeometry(0.05, 0.05, 0.22, 6), offset: [0, -0.1, 0], stumpRadius: 0.045 },
-  { boneKey: 'rightLowerArm', vrmBone: 'rightLowerArm', geo: new THREE.CylinderGeometry(0.05, 0.05, 0.22, 6), offset: [0, -0.1, 0], stumpRadius: 0.045 },
-  { boneKey: 'leftUpperLeg', vrmBone: 'leftUpperLeg', geo: new THREE.CylinderGeometry(0.08, 0.08, 0.34, 6), offset: [0, -0.16, 0], stumpRadius: 0.07 },
-  { boneKey: 'rightUpperLeg', vrmBone: 'rightUpperLeg', geo: new THREE.CylinderGeometry(0.08, 0.08, 0.34, 6), offset: [0, -0.16, 0], stumpRadius: 0.07 },
-  { boneKey: 'leftLowerLeg', vrmBone: 'leftLowerLeg', geo: new THREE.CylinderGeometry(0.07, 0.07, 0.34, 6), offset: [0, -0.16, 0], stumpRadius: 0.06 },
-  { boneKey: 'rightLowerLeg', vrmBone: 'rightLowerLeg', geo: new THREE.CylinderGeometry(0.07, 0.07, 0.34, 6), offset: [0, -0.16, 0], stumpRadius: 0.06 },
+  { boneKey: 'head', vrmBone: 'head', geo: new THREE.SphereGeometry(0.16, 8, 8), offset: [0, 0.08, 0], stumpRadius: 0.07, displayName: 'Head' },
+  { boneKey: 'neck', vrmBone: 'neck', geo: new THREE.SphereGeometry(0.09, 8, 8), offset: [0, 0.04, 0], stumpRadius: 0.06, displayName: 'Neck' },
+  { boneKey: 'chest', vrmBone: 'chest', geo: new THREE.BoxGeometry(0.28, 0.24, 0.2), offset: [0, 0.06, 0], stumpRadius: 0.12, displayName: 'Chest' },
+  { boneKey: 'spine', vrmBone: 'spine', geo: new THREE.SphereGeometry(0.18, 8, 8), offset: [0, 0, 0], stumpRadius: 0.11, displayName: 'Spine' },
+  { boneKey: 'hips', vrmBone: 'hips', geo: new THREE.SphereGeometry(0.22, 8, 8), offset: [0, -0.04, 0], stumpRadius: 0.14, displayName: 'Groin / Pelvis' },
+  { boneKey: 'leftUpperArm', vrmBone: 'leftUpperArm', geo: new THREE.CylinderGeometry(0.06, 0.06, 0.24, 6), offset: [0, -0.1, 0], stumpRadius: 0.05, displayName: 'Left Arm' },
+  { boneKey: 'rightUpperArm', vrmBone: 'rightUpperArm', geo: new THREE.CylinderGeometry(0.06, 0.06, 0.24, 6), offset: [0, -0.1, 0], stumpRadius: 0.05, displayName: 'Right Arm' },
+  { boneKey: 'leftLowerArm', vrmBone: 'leftLowerArm', geo: new THREE.CylinderGeometry(0.05, 0.05, 0.22, 6), offset: [0, -0.1, 0], stumpRadius: 0.045, displayName: 'Left Forearm' },
+  { boneKey: 'rightLowerArm', vrmBone: 'rightLowerArm', geo: new THREE.CylinderGeometry(0.05, 0.05, 0.22, 6), offset: [0, -0.1, 0], stumpRadius: 0.045, displayName: 'Right Forearm' },
+  { boneKey: 'leftUpperLeg', vrmBone: 'leftUpperLeg', geo: new THREE.CylinderGeometry(0.08, 0.08, 0.34, 6), offset: [0, -0.16, 0], stumpRadius: 0.07, displayName: 'Left Thigh' },
+  { boneKey: 'rightUpperLeg', vrmBone: 'rightUpperLeg', geo: new THREE.CylinderGeometry(0.08, 0.08, 0.34, 6), offset: [0, -0.16, 0], stumpRadius: 0.07, displayName: 'Right Thigh' },
+  { boneKey: 'leftLowerLeg', vrmBone: 'leftLowerLeg', geo: new THREE.CylinderGeometry(0.07, 0.07, 0.34, 6), offset: [0, -0.16, 0], stumpRadius: 0.06, displayName: 'Left Leg' },
+  { boneKey: 'rightLowerLeg', vrmBone: 'rightLowerLeg', geo: new THREE.CylinderGeometry(0.07, 0.07, 0.34, 6), offset: [0, -0.16, 0], stumpRadius: 0.06, displayName: 'Right Leg' },
 ];
 
 // ============================================================================
-// Web Audio Synthesizer (Realistic & Punchy FX)
+// Procedural Maze Generator & 3D Wall Landing Mechanics
+// ============================================================================
+const MAZE_GRID_SIZE = 17;
+const MAZE_CELL_SIZE = 3.6;
+const MAZE_WALL_HEIGHT = 2.8; // Lower height allows players to easily jump on top for shortcuts!
+const GROUND_FLOOR_Y = 0.0; // Strict ground level: nothing ever sinks below this!
+
+export interface MazeData {
+  grid: number[][];
+  size: number;
+  cellSize: number;
+  walls: Array<{ x: number; z: number; width: number; depth: number }>;
+  openCells: Array<{ gx: number; gz: number; x: number; z: number }>;
+}
+
+function generateProceduralMaze(size: number = MAZE_GRID_SIZE): MazeData {
+  const grid: number[][] = Array.from({ length: size }, () => Array(size).fill(1));
+
+  const stack: [number, number][] = [];
+  const startX = 1;
+  const startY = 1;
+  grid[startY][startX] = 0;
+  stack.push([startX, startY]);
+
+  const directions = [
+    [0, -2],
+    [0, 2],
+    [-2, 0],
+    [2, 0],
+  ];
+
+  while (stack.length > 0) {
+    const [cx, cy] = stack[stack.length - 1];
+    const neighbors: [number, number, number, number][] = [];
+
+    for (const [dx, dy] of directions) {
+      const nx = cx + dx;
+      const ny = cy + dy;
+      if (nx > 0 && nx < size - 1 && ny > 0 && ny < size - 1 && grid[ny][nx] === 1) {
+        neighbors.push([nx, ny, dx, dy]);
+      }
+    }
+
+    if (neighbors.length > 0) {
+      const [nx, ny, dx, dy] = neighbors[Math.floor(Math.random() * neighbors.length)];
+      grid[cy + dy / 2][cx + dx / 2] = 0;
+      grid[ny][nx] = 0;
+      stack.push([nx, ny]);
+    } else {
+      stack.pop();
+    }
+  }
+
+  // Clear central plaza
+  const mid = Math.floor(size / 2);
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      grid[mid + dy][mid + dx] = 0;
+    }
+  }
+
+  // Add corridor loops for open traversal
+  for (let y = 2; y < size - 2; y += 2) {
+    for (let x = 2; x < size - 2; x += 2) {
+      if (Math.random() < 0.28) {
+        grid[y][x] = 0;
+      }
+    }
+  }
+
+  const offset = ((size - 1) * MAZE_CELL_SIZE) / 2;
+  const walls: Array<{ x: number; z: number; width: number; depth: number }> = [];
+  const openCells: Array<{ gx: number; gz: number; x: number; z: number }> = [];
+
+  for (let gz = 0; gz < size; gz++) {
+    for (let gx = 0; gx < size; gx++) {
+      const wx = gx * MAZE_CELL_SIZE - offset;
+      const wz = gz * MAZE_CELL_SIZE - offset;
+      if (grid[gz][gx] === 1) {
+        walls.push({
+          x: wx,
+          z: wz,
+          width: MAZE_CELL_SIZE,
+          depth: MAZE_CELL_SIZE,
+        });
+      } else {
+        openCells.push({ gx, gz, x: wx, z: wz });
+      }
+    }
+  }
+
+  return { grid, size, cellSize: MAZE_CELL_SIZE, walls, openCells };
+}
+
+// Check floor/standing height at (x, z): allows standing on top of walls!
+function getMazeFloorHeightAt(x: number, z: number, maze: MazeData): number {
+  const offset = ((maze.size - 1) * maze.cellSize) / 2;
+  const halfCell = maze.cellSize / 2;
+  const gx = Math.round((x + offset) / maze.cellSize);
+  const gz = Math.round((z + offset) / maze.cellSize);
+  if (gx >= 0 && gx < maze.size && gz >= 0 && gz < maze.size) {
+    if (maze.grid[gz][gx] === 1) {
+      const wallCenterX = gx * maze.cellSize - offset;
+      const wallCenterZ = gz * maze.cellSize - offset;
+      if (Math.abs(x - wallCenterX) <= halfCell && Math.abs(z - wallCenterZ) <= halfCell) {
+        return MAZE_WALL_HEIGHT;
+      }
+    }
+  }
+  return GROUND_FLOOR_Y;
+}
+
+// Resolve horizontal collisions with walls (only when character is BELOW wall top)
+function resolveMazeCollision(pos: THREE.Vector3, radius: number, maze: MazeData): void {
+  // If entity is jumping above or walking on the wall top, do not block horizontal motion!
+  if (pos.y >= MAZE_WALL_HEIGHT - 0.15) {
+    return;
+  }
+
+  const offset = ((maze.size - 1) * maze.cellSize) / 2;
+  const halfCell = maze.cellSize / 2;
+
+  const gx = Math.round((pos.x + offset) / maze.cellSize);
+  const gz = Math.round((pos.z + offset) / maze.cellSize);
+
+  for (let dz = -1; dz <= 1; dz++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const cx = gx + dx;
+      const cz = gz + dz;
+      if (cx >= 0 && cx < maze.size && cz >= 0 && cz < maze.size) {
+        if (maze.grid[cz][cx] === 1) {
+          const wallCenterX = cx * maze.cellSize - offset;
+          const wallCenterZ = cz * maze.cellSize - offset;
+
+          const minX = wallCenterX - halfCell;
+          const maxX = wallCenterX + halfCell;
+          const minZ = wallCenterZ - halfCell;
+          const maxZ = wallCenterZ + halfCell;
+
+          const closestX = THREE.MathUtils.clamp(pos.x, minX, maxX);
+          const closestZ = THREE.MathUtils.clamp(pos.z, minZ, maxZ);
+
+          const distX = pos.x - closestX;
+          const distZ = pos.z - closestZ;
+          const distSq = distX * distX + distZ * distZ;
+
+          if (distSq < radius * radius) {
+            const dist = Math.sqrt(distSq);
+            if (dist > 0.0001) {
+              const push = (radius - dist) / dist;
+              pos.x += distX * push;
+              pos.z += distZ * push;
+            } else {
+              pos.x += radius;
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// ============================================================================
+// WebAudio Procedural SFX Engine
 // ============================================================================
 class TorAudioEngine {
   private ctx: AudioContext | null = null;
+  public enabled: boolean = true;
   private chargeOsc: OscillatorNode | null = null;
   private chargeGain: GainNode | null = null;
-  public enabled: boolean = true;
 
   private initCtx() {
     if (!this.ctx) {
-      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
       if (AudioCtx) {
         this.ctx = new AudioCtx();
       }
@@ -191,18 +376,10 @@ class TorAudioEngine {
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
       osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(90, this.ctx.currentTime);
+      osc.frequency.setValueAtTime(65, this.ctx.currentTime);
       gain.gain.setValueAtTime(0.01, this.ctx.currentTime);
-      gain.gain.linearRampToValueAtTime(0.12, this.ctx.currentTime + 0.3);
-
-      const filter = this.ctx.createBiquadFilter();
-      filter.type = 'lowpass';
-      filter.frequency.setValueAtTime(350, this.ctx.currentTime);
-
-      osc.connect(filter);
-      filter.connect(gain);
+      osc.connect(gain);
       gain.connect(this.ctx.destination);
-
       osc.start();
       this.chargeOsc = osc;
       this.chargeGain = gain;
@@ -210,11 +387,12 @@ class TorAudioEngine {
   }
 
   public updateChargeHum(progress: number) {
-    if (!this.ctx || !this.chargeOsc || !this.chargeGain) return;
+    if (!this.chargeOsc || !this.chargeGain || !this.ctx) return;
     try {
-      const freq = 90 + progress * 320;
+      const freq = 65 + progress * 240;
+      const vol = 0.05 + progress * 0.15;
       this.chargeOsc.frequency.setTargetAtTime(freq, this.ctx.currentTime, 0.05);
-      this.chargeGain.gain.setTargetAtTime(0.05 + progress * 0.18, this.ctx.currentTime, 0.05);
+      this.chargeGain.gain.setTargetAtTime(vol, this.ctx.currentTime, 0.05);
     } catch {}
   }
 
@@ -243,16 +421,17 @@ class TorAudioEngine {
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
       osc.type = 'triangle';
-      osc.frequency.setValueAtTime(260, now);
-      osc.frequency.exponentialRampToValueAtTime(60, now + 0.12);
+      osc.frequency.setValueAtTime(160, now);
+      osc.frequency.exponentialRampToValueAtTime(45, now + 0.15);
 
-      gain.gain.setValueAtTime(0.35, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+      gain.gain.setValueAtTime(0.4, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
 
       osc.connect(gain);
       gain.connect(this.ctx.destination);
       osc.start(now);
       osc.stop(now + 0.15);
+      this.playNoiseImpact(0.08, 450, 0.3);
     } catch {}
   }
 
@@ -262,21 +441,20 @@ class TorAudioEngine {
     if (!this.ctx) return;
     try {
       const now = this.ctx.currentTime;
-      const subOsc = this.ctx.createOscillator();
-      const subGain = this.ctx.createGain();
-      subOsc.type = 'sine';
-      subOsc.frequency.setValueAtTime(140, now);
-      subOsc.frequency.exponentialRampToValueAtTime(32, now + 0.28);
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(130, now);
+      osc.frequency.exponentialRampToValueAtTime(32, now + 0.28);
 
-      subGain.gain.setValueAtTime(0.7, now);
-      subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.32);
+      gain.gain.setValueAtTime(0.7, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
 
-      subOsc.connect(subGain);
-      subGain.connect(this.ctx.destination);
-      subOsc.start(now);
-      subOsc.stop(now + 0.35);
-
-      this.playNoiseBurst(0.18, 0.3, 1200);
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.28);
+      this.playNoiseImpact(0.18, 650, 0.5);
     } catch {}
   }
 
@@ -286,27 +464,20 @@ class TorAudioEngine {
     if (!this.ctx) return;
     try {
       const now = this.ctx.currentTime;
-      const ripOsc = this.ctx.createOscillator();
-      const ripGain = this.ctx.createGain();
-      ripOsc.type = 'sawtooth';
-      ripOsc.frequency.setValueAtTime(320, now);
-      ripOsc.frequency.exponentialRampToValueAtTime(45, now + 0.35);
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(95, now);
+      osc.frequency.exponentialRampToValueAtTime(28, now + 0.4);
 
-      ripGain.gain.setValueAtTime(0.65, now);
-      ripGain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+      gain.gain.setValueAtTime(0.85, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
 
-      const filter = this.ctx.createBiquadFilter();
-      filter.type = 'bandpass';
-      filter.frequency.setValueAtTime(800, now);
-      filter.Q.setValueAtTime(2.5, now);
-
-      ripOsc.connect(filter);
-      filter.connect(ripGain);
-      ripGain.connect(this.ctx.destination);
-      ripOsc.start(now);
-      ripOsc.stop(now + 0.42);
-
-      this.playNoiseBurst(0.35, 0.5, 2400);
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.4);
+      this.playNoiseImpact(0.35, 900, 0.65);
     } catch {}
   }
 
@@ -316,28 +487,49 @@ class TorAudioEngine {
     if (!this.ctx) return;
     try {
       const now = this.ctx.currentTime;
-      const boom = this.ctx.createOscillator();
-      const boomGain = this.ctx.createGain();
-      boom.type = 'sine';
-      boom.frequency.setValueAtTime(180, now);
-      boom.frequency.exponentialRampToValueAtTime(20, now + 0.65);
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(80, now);
+      osc.frequency.exponentialRampToValueAtTime(25, now + 0.7);
 
-      boomGain.gain.setValueAtTime(1.0, now);
-      boomGain.gain.exponentialRampToValueAtTime(0.001, now + 0.7);
+      gain.gain.setValueAtTime(1.0, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.7);
 
-      boom.connect(boomGain);
-      boomGain.connect(this.ctx.destination);
-      boom.start(now);
-      boom.stop(now + 0.72);
-
-      this.playNoiseBurst(0.55, 0.8, 1600);
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.7);
+      this.playNoiseImpact(0.65, 1200, 0.95);
     } catch {}
   }
 
-  private playNoiseBurst(duration: number, volume: number, cutoff: number) {
+  public playGrabSound() {
+    if (!this.enabled) return;
+    this.initCtx();
     if (!this.ctx) return;
     try {
-      const bufferSize = Math.floor(this.ctx.sampleRate * duration);
+      const now = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(420, now);
+      osc.frequency.exponentialRampToValueAtTime(840, now + 0.15);
+
+      gain.gain.setValueAtTime(0.25, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.15);
+    } catch {}
+  }
+
+  private playNoiseImpact(duration: number, cutoff: number, volume: number) {
+    if (!this.ctx) return;
+    try {
+      const bufferSize = this.ctx.sampleRate * duration;
       const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
       const data = buffer.getChannelData(0);
       for (let i = 0; i < bufferSize; i++) {
@@ -371,8 +563,8 @@ function createFleshCapMesh(radius: number, colorHex: number): THREE.Mesh {
   const geo = new THREE.CylinderGeometry(radius, radius * 0.9, 0.035, 14);
   const mat = new THREE.MeshStandardMaterial({
     color: colorHex,
-    roughness: 0.25,
-    metalness: 0.1,
+    roughness: 0.8,
+    metalness: 0.0,
   });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.castShadow = true;
@@ -380,11 +572,254 @@ function createFleshCapMesh(radius: number, colorHex: number): THREE.Mesh {
 }
 
 // ============================================================================
+// VRM Buffer Fetcher & Memory Cache
+// ============================================================================
+const vrmBufferCache = new Map<string, ArrayBuffer>();
+
+async function fetchVRMBuffer(
+  outfit: WardrobeOutfit | { fileName: string; modelUrl?: string; fallbackModelUrl?: string }
+): Promise<ArrayBuffer | null> {
+  const fileName = (outfit.fileName || '').trim();
+
+  if (fileName && vrmBufferCache.has(fileName)) {
+    return vrmBufferCache.get(fileName)!.slice(0);
+  }
+
+  if (outfit.modelUrl && (outfit.modelUrl.startsWith('blob:') || outfit.modelUrl.startsWith('data:'))) {
+    try {
+      const resp = await fetch(outfit.modelUrl);
+      if (resp.ok) {
+        return await resp.arrayBuffer();
+      }
+    } catch (e) {
+      console.warn('Failed to fetch blob VRM:', e);
+    }
+  }
+
+  const candidateUrls: string[] = [];
+
+  if (fileName) {
+    candidateUrls.push(`/api/vrm?file=${encodeURIComponent(fileName)}`);
+  }
+  if (outfit.modelUrl && !candidateUrls.includes(outfit.modelUrl)) {
+    candidateUrls.push(outfit.modelUrl);
+  }
+  if (outfit.fallbackModelUrl && !candidateUrls.includes(outfit.fallbackModelUrl)) {
+    candidateUrls.push(outfit.fallbackModelUrl);
+  }
+  if (fileName) {
+    candidateUrls.push(`${MODEL_SOURCE_DOMAIN}/${fileName}`);
+    candidateUrls.push(`${MODEL_FALLBACK_DOMAIN}/${fileName}`);
+    candidateUrls.push(`https://ai.mux8.com/${fileName}`);
+    candidateUrls.push(`https://muxai.vercel.app/${fileName}`);
+  }
+
+  const uniqueUrls = Array.from(new Set(candidateUrls));
+
+  for (const url of uniqueUrls) {
+    try {
+      const resp = await fetch(url, { redirect: 'follow' });
+      if (resp.ok) {
+        const buf = await resp.arrayBuffer();
+        if (buf && buf.byteLength > 1000) {
+          const header = new Uint8Array(buf, 0, 4);
+          const isGlb = header[0] === 0x67 && header[1] === 0x6c && header[2] === 0x54 && header[3] === 0x46;
+          if (isGlb || buf.byteLength > 10000) {
+            if (fileName) {
+              vrmBufferCache.set(fileName, buf);
+            }
+            return buf.slice(0);
+          }
+        }
+      }
+    } catch {
+      // Continue
+    }
+  }
+
+  return null;
+}
+
+// ============================================================================
+// FBX Loader & Retargeting Cache with Hips Height Preservation
+// ============================================================================
+const fbxBufferCache = new Map<string, ArrayBuffer>();
+const fbxLoaderInstance = new FBXLoader();
+
+/**
+ * Normalizes a retargeted Mixamo AnimationClip.
+ * Crucially preserves the natural standing height of the hips bone so the
+ * model's legs and feet NEVER get forced down below ground level!
+ */
+function localizeAnimationClip(clip: THREE.AnimationClip, vrm?: VRM): THREE.AnimationClip {
+  let restHipsY = 0.85;
+  if (vrm && vrm.humanoid) {
+    const hipsNode = vrm.humanoid.getNormalizedBoneNode('hips');
+    if (hipsNode && hipsNode.position.y > 0.45) {
+      restHipsY = hipsNode.position.y;
+    }
+  }
+
+  for (const track of clip.tracks) {
+    if (track.name.endsWith('.position') && track.values.length >= 3) {
+      const values = track.values;
+      const baseX = values[0];
+      const baseZ = values[2];
+
+      // Calculate average Y across keyframes to detect if the clip's hips are sunken to 0
+      let sumY = 0;
+      let count = 0;
+      for (let i = 1; i < values.length; i += 3) {
+        sumY += values[i];
+        count++;
+      }
+      const avgY = count > 0 ? sumY / count : 0;
+
+      // If the animation clip sets hips position to 0 or negative, offset by restHipsY
+      // so the hips remain at ~0.85m standing height and legs never sink below ground!
+      const isHipsTrack = track.name.toLowerCase().includes('hips');
+      const yOffset = (isHipsTrack || avgY < 0.45) ? (avgY < 0.45 ? restHipsY : 0) : 0;
+
+      for (let i = 0; i < values.length; i += 3) {
+        values[i] = (values[i] - baseX) * 0.25;
+        values[i + 1] = values[i + 1] + yOffset;
+        values[i + 2] = (values[i + 2] - baseZ) * 0.25;
+      }
+    }
+  }
+  return clip;
+}
+
+async function fetchFBXBuffer(fileName: string): Promise<ArrayBuffer | null> {
+  if (fbxBufferCache.has(fileName)) {
+    return fbxBufferCache.get(fileName)!.slice(0);
+  }
+
+  const candidateUrls = [
+    `/api/animation/wait?file=${encodeURIComponent(fileName)}`,
+    `${MODEL_SOURCE_DOMAIN}/${fileName}`,
+    `${MODEL_FALLBACK_DOMAIN}/${fileName}`,
+    `https://ai.mux8.com/${fileName}`,
+    `https://muxai.vercel.app/${fileName}`,
+  ];
+
+  for (const url of candidateUrls) {
+    try {
+      const resp = await fetch(url);
+      if (resp.ok) {
+        const buf = await resp.arrayBuffer();
+        if (buf && buf.byteLength > 1000) {
+          fbxBufferCache.set(fileName, buf);
+          return buf.slice(0);
+        }
+      }
+    } catch {}
+  }
+  return null;
+}
+
+async function loadRetargetedClipFromFBX(
+  fileName: string,
+  vrm: VRM
+): Promise<THREE.AnimationClip | null> {
+  const buf = await fetchFBXBuffer(fileName);
+  if (!buf) return null;
+  try {
+    const fbxGroup = fbxLoaderInstance.parse(buf, '');
+    const rawClip = retargetAnimation(fbxGroup, vrm);
+    if (rawClip) {
+      return localizeAnimationClip(rawClip, vrm);
+    }
+  } catch (err) {
+    console.warn(`Failed to parse/retarget FBX ${fileName}:`, err);
+  }
+  return null;
+}
+
+const STANDBY_ANIMATION_FILES = [
+  'mixamo_idle.fbx',
+  'mixamo_wait.fbx',
+  'mixamo_yawn.fbx',
+  'mixamo_armstretch.fbx',
+  'mixamo_feelingshy.fbx',
+  'mixamo_idle_nailcheck.fbx',
+];
+
+function flashNpcMaterials(npc: NPCEntity) {
+  npc.rootGroup.traverse((obj) => {
+    if ((obj as THREE.Mesh).isMesh && (obj as THREE.Mesh).material) {
+      const mesh = obj as THREE.Mesh;
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      mats.forEach((mat) => {
+        if ('color' in mat && (mat as any).color instanceof THREE.Color) {
+          const colorProp = (mat as any).color as THREE.Color;
+          if (!mesh.userData.origColor) {
+            mesh.userData.origColor = colorProp.clone();
+          }
+          colorProp.setHex(0xff2222);
+          setTimeout(() => {
+            if (mesh.userData.origColor) {
+              colorProp.copy(mesh.userData.origColor);
+            }
+          }, 180);
+        }
+      });
+    }
+  });
+}
+
+function collectHairBones(vrm: VRM): HairBoneTrack[] {
+  const tracks: HairBoneTrack[] = [];
+  vrm.scene.traverse((obj) => {
+    const n = obj.name.toLowerCase();
+    if (n.includes('hair') || n.includes('sec_') || n.includes('ribbon') || n.includes('skirt') || n.includes('tail')) {
+      tracks.push({
+        bone: obj,
+        initialRot: obj.rotation.clone(),
+        swayX: 0,
+        swayZ: 0,
+        phase: Math.random() * Math.PI * 2,
+      });
+    }
+  });
+  return tracks;
+}
+
+/**
+ * Strict ground clamping rule: checks world position of lowest bones (feet, toes)
+ * and bounding box. If anything is below minGroundY, lifts the root so it rests firmly on the surface!
+ */
+function clampEntityAboveGround(rootGroup: THREE.Group, vrm: VRM | null, minGroundY: number): void {
+  if (!vrm) return;
+  const lFoot = vrm.humanoid?.getNormalizedBoneNode('leftFoot');
+  const rFoot = vrm.humanoid?.getNormalizedBoneNode('rightFoot');
+  const lToes = vrm.humanoid?.getNormalizedBoneNode('leftToes');
+  const rToes = vrm.humanoid?.getNormalizedBoneNode('rightToes');
+
+  let lowestY = Infinity;
+  const tempV = new THREE.Vector3();
+  [lFoot, rFoot, lToes, rToes].forEach((b) => {
+    if (b) {
+      b.getWorldPosition(tempV);
+      if (tempV.y < lowestY) lowestY = tempV.y;
+    }
+  });
+
+  if (lowestY === Infinity) {
+    const box = new THREE.Box3().setFromObject(vrm.scene);
+    lowestY = box.min.y;
+  }
+
+  if (lowestY < minGroundY) {
+    rootGroup.position.y += (minGroundY - lowestY);
+  }
+}
+
+// ============================================================================
 // Main Component
 // ============================================================================
 export const TorGamePage: React.FC<TorGamePageProps> = ({
   onBackToChat,
-  onNavigateHome,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -393,6 +828,7 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
   const sceneRef = useRef<THREE.Scene | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const mazeRef = useRef<MazeData>(generateProceduralMaze(MAZE_GRID_SIZE));
 
   // Entities & Simulation Refs
   const npcsRef = useRef<NPCEntity[]>([]);
@@ -402,20 +838,35 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
   const bloodDecalsGroupRef = useRef<THREE.Group | null>(null);
   const bloodDecalsCountRef = useRef<number>(0);
 
+  // Grab Mechanic: Keyframed Hand Reach & Physical Attachment
+  const grabbedNpcRef = useRef<{
+    npc: NPCEntity;
+    partKey: BodyPartKey;
+    boneNode: THREE.Object3D | null;
+  } | null>(null);
+  const [isGrabbingUI, setIsGrabbingUI] = useState<boolean>(false);
+  const [grabbedLabelUI, setGrabbedLabelUI] = useState<string>('');
+
   // Player VRM State
   const playerRootRef = useRef<THREE.Group | null>(null);
   const playerVrmRef = useRef<VRM | null>(null);
-  const playerPosRef = useRef<THREE.Vector3>(new THREE.Vector3(0, 0, 3.5));
+  const playerMixerRef = useRef<THREE.AnimationMixer | null>(null);
+  const playerActionsRef = useRef<Record<string, THREE.AnimationAction>>({});
+  const activePlayerActionRef = useRef<string>('idle');
+  const playerHairBonesRef = useRef<HairBoneTrack[]>([]);
+  const [playerHealthUI] = useState<number>(100);
+
+  const playerPosRef = useRef<THREE.Vector3>(new THREE.Vector3(0, 0, 0));
+  const playerPrevPosRef = useRef<THREE.Vector3>(new THREE.Vector3(0, 0, 0));
+  const playerVelYRef = useRef<number>(0);
   const playerYawRef = useRef<number>(0);
-  const playerAnimTimeRef = useRef<number>(0);
-  const playerIsPunchingRef = useRef<boolean>(false);
-  const playerPunchTypeRef = useRef<number>(1);
-  const playerPunchProgressRef = useRef<number>(0);
+  const isPlayerAttackingRef = useRef<boolean>(false);
+  const isJumpingRef = useRef<boolean>(false);
 
   // Third Person Action Camera
   const cameraYawRef = useRef<number>(0);
   const cameraPitchRef = useRef<number>(0.18);
-  const cameraDistanceRef = useRef<number>(2.8);
+  const cameraDistanceRef = useRef<number>(3.0);
   const isPointerLockedRef = useRef<boolean>(false);
   const isDraggingMouseRef = useRef<boolean>(false);
 
@@ -445,13 +896,19 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
   const [chargeLevelUI, setChargeLevelUI] = useState<number>(0);
   const [chargeProgressUI, setChargeProgressUI] = useState<number>(0);
   const [targetedPartUI, setTargetedPartUI] = useState<{
-    npcName: string;
-    partName: string;
+    partKey: BodyPartKey;
+    displayName: string;
     inRange: boolean;
   } | null>(null);
+  const [damagePopups, setDamagePopups] = useState<Array<{
+    id: string;
+    text: string;
+    x: number;
+    y: number;
+    color: string;
+  }>>([]);
   const [hitMarkerActive, setHitMarkerActive] = useState<boolean>(false);
   const [hitMessage, setHitMessage] = useState<string | null>(null);
-  const [activeNpcCount, setActiveNpcCount] = useState<number>(0);
   const [bloodStyle, setBloodStyle] = useState<BloodStyle>('crimson');
   const bloodStyleRef = useRef<BloodStyle>('crimson');
   useEffect(() => {
@@ -474,16 +931,79 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
   const [librarySearch, setLibrarySearch] = useState<string>('');
   const [libraryCategory, setLibraryCategory] = useState<string>('all');
   const [isControlsModalOpen, setIsControlsModalOpen] = useState<boolean>(false);
-  const [isPlayerLoading, setIsPlayerLoading] = useState<boolean>(true);
 
-  // Arena Screen Shake
+  // Screen Shake
   const screenShakeRef = useRef<number>(0);
 
   // ----------------------------------------------------
-  // Spawn NPC Helper (Loads Actual VRM Model Directly!)
+  // Full Verlet Ragdoll System Setup
+  // ----------------------------------------------------
+  const setupNPCRagdoll = useCallback((npc: NPCEntity) => {
+    if (!npc.vrm || !npc.vrm.humanoid) return;
+
+    const particles: RagdollParticle[] = [];
+    const sticks: RagdollStick[] = [];
+    const pMap = new Map<BodyPartKey, RagdollParticle>();
+
+    for (const def of VRM_COLLIDER_DEFS) {
+      const boneNode = npc.vrm.humanoid.getNormalizedBoneNode(def.vrmBone as any);
+      const worldPos = new THREE.Vector3();
+      if (boneNode) {
+        boneNode.getWorldPosition(worldPos);
+      } else {
+        worldPos.copy(npc.position).add(new THREE.Vector3(0, 1.0, 0));
+      }
+
+      // Safeguard: never let particle initialize below ground level
+      worldPos.y = Math.max(def.stumpRadius || 0.1, worldPos.y);
+
+      const p: RagdollParticle = {
+        name: def.boneKey,
+        boneNode,
+        position: worldPos.clone(),
+        prevPosition: worldPos.clone(),
+        radius: def.stumpRadius || 0.1,
+      };
+      particles.push(p);
+      pMap.set(def.boneKey, p);
+    }
+
+    const connections: Array<[BodyPartKey, BodyPartKey]> = [
+      ['hips', 'spine'],
+      ['spine', 'chest'],
+      ['chest', 'neck'],
+      ['neck', 'head'],
+      ['chest', 'leftUpperArm'],
+      ['leftUpperArm', 'leftLowerArm'],
+      ['chest', 'rightUpperArm'],
+      ['rightUpperArm', 'rightLowerArm'],
+      ['hips', 'leftUpperLeg'],
+      ['leftUpperLeg', 'leftLowerLeg'],
+      ['hips', 'rightUpperLeg'],
+      ['rightUpperLeg', 'rightLowerLeg'],
+    ];
+
+    for (const [k1, k2] of connections) {
+      const p1 = pMap.get(k1);
+      const p2 = pMap.get(k2);
+      if (p1 && p2) {
+        sticks.push({
+          p1,
+          p2,
+          restLength: p1.position.distanceTo(p2.position) || 0.3,
+        });
+      }
+    }
+
+    npc.ragdollParticles = particles;
+    npc.ragdollSticks = sticks;
+  }, []);
+
+  // ----------------------------------------------------
+  // Spawn NPC Helper (Loads VRM Model & Standby Animations)
   // ----------------------------------------------------
   const spawnNPC = useCallback(
-    (outfit: WardrobeOutfit, spawnOffset: { x: number; z: number } = { x: 0, z: 0 }) => {
+    (outfit: WardrobeOutfit, customPos?: THREE.Vector3) => {
       const scene = sceneRef.current;
       if (!scene) return;
 
@@ -491,28 +1011,24 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
       const rootGroup = new THREE.Group();
       rootGroup.name = `NPC_${npcId}`;
 
-      const spawnPos = new THREE.Vector3(
-        playerPosRef.current.x + spawnOffset.x,
-        0,
-        playerPosRef.current.z + spawnOffset.z
-      );
+      let spawnPos = customPos ? customPos.clone() : new THREE.Vector3();
+      if (!customPos) {
+        const maze = mazeRef.current;
+        const validOpen = maze.openCells.filter((c) => {
+          const d = Math.hypot(c.x - playerPosRef.current.x, c.z - playerPosRef.current.z);
+          return d > 6.0;
+        });
+        const cell = validOpen.length > 0
+          ? validOpen[Math.floor(Math.random() * validOpen.length)]
+          : maze.openCells[Math.floor(Math.random() * maze.openCells.length)];
 
+        spawnPos.set(cell.x, GROUND_FLOOR_Y, cell.z);
+      }
+
+      spawnPos.y = GROUND_FLOOR_Y;
       rootGroup.position.copy(spawnPos);
-      rootGroup.rotation.y = Math.PI; // Face towards player / arena center
+      rootGroup.rotation.y = Math.random() * Math.PI * 2;
       scene.add(rootGroup);
-
-      // Temporary spawn ground beacon while loading the actual VRM
-      const spawnRingGeo = new THREE.RingGeometry(0.35, 0.42, 32);
-      const spawnRingMat = new THREE.MeshBasicMaterial({
-        color: 0x55d2f6,
-        side: THREE.DoubleSide,
-        transparent: true,
-        opacity: 0.6,
-      });
-      const spawnRing = new THREE.Mesh(spawnRingGeo, spawnRingMat);
-      spawnRing.rotation.x = -Math.PI / 2;
-      spawnRing.position.y = 0.01;
-      rootGroup.add(spawnRing);
 
       const partsState: Record<BodyPartKey, NPCPartState> = {} as any;
       const proxyColliders: THREE.Mesh[] = [];
@@ -533,10 +1049,11 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
         name: outfit.name,
         outfit,
         position: spawnPos,
-        rotation: new THREE.Euler(0, Math.PI, 0),
+        rotation: new THREE.Euler(0, rootGroup.rotation.y, 0),
         velocity: new THREE.Vector3(0, 0, 0),
         angularVelocity: new THREE.Vector3(0, 0, 0),
         isRagdoll: false,
+        isDead: false,
         isObliterated: false,
         health: 100,
         bloodStainsCount: 0,
@@ -547,31 +1064,52 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
         proxyColliders,
         staggerSpring: 0,
         staggerVelocity: 0,
+        wanderState: 'idle',
+        wanderTimer: 2.0 + Math.random() * 4.0,
+        wanderDir: new THREE.Vector3(),
+        hasTakenDamage: false,
+        dyingTimer: 0,
+        mixer: null,
+        currentActionName: null,
+        ragdollParticles: [],
+        ragdollSticks: [],
+        hairBones: [],
       };
 
-      // Load the Genuine VRM Model Directly
       const gltfLoader = new GLTFLoader();
       gltfLoader.register((parser) => new VRMLoaderPlugin(parser));
-      const modelUrl = outfit.modelUrl || outfit.fallbackModelUrl;
 
-      if (modelUrl) {
-        gltfLoader.load(
-          modelUrl,
+      fetchVRMBuffer(outfit).then((buffer) => {
+        if (!buffer || !rootGroup.parent) {
+          console.warn(`Failed to retrieve VRM buffer for ${outfit.name}`);
+          newNPC.isLoading = false;
+          return;
+        }
+
+        gltfLoader.parse(
+          buffer,
+          '',
           (gltf) => {
+            if (!rootGroup.parent) return;
             const vrm = gltf.userData.vrm as VRM;
-            if (vrm && rootGroup.parent) {
+            if (vrm) {
               try {
                 VRMUtils.removeUnnecessaryVertices(gltf.scene);
-                VRMUtils.combineSkeletons(gltf.scene);
                 VRMUtils.rotateVRM0(vrm);
               } catch {}
+
               vrm.scene.position.set(0, 0, 0);
               vrm.scene.rotation.set(0, 0, 0);
+
+              // Auto-calibrate feet level with ground so character stands firmly at y = 0
+              vrm.scene.updateMatrixWorld(true);
+              const bbox = new THREE.Box3().setFromObject(vrm.scene);
+              if (bbox.min.y < 0.0) {
+                vrm.scene.position.y = -bbox.min.y;
+              }
+
               newNPC.vrm = vrm;
               newNPC.isLoading = false;
-
-              // Remove temporary spawn beacon
-              rootGroup.remove(spawnRing);
 
               vrm.scene.traverse((obj) => {
                 obj.frustumCulled = false;
@@ -580,9 +1118,23 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
                   obj.receiveShadow = true;
                 }
               });
+
+              // Apply natural anime resting arm stance
+              if (vrm.humanoid) {
+                const leftUpperArm = vrm.humanoid.getNormalizedBoneNode('leftUpperArm');
+                const rightUpperArm = vrm.humanoid.getNormalizedBoneNode('rightUpperArm');
+                const leftLowerArm = vrm.humanoid.getNormalizedBoneNode('leftLowerArm');
+                const rightLowerArm = vrm.humanoid.getNormalizedBoneNode('rightLowerArm');
+
+                if (leftUpperArm) leftUpperArm.rotation.set(0.12, 0.05, -1.25);
+                if (rightUpperArm) rightUpperArm.rotation.set(0.12, -0.05, 1.25);
+                if (leftLowerArm) leftLowerArm.rotation.set(0.0, -0.22, -0.1);
+                if (rightLowerArm) rightLowerArm.rotation.set(0.0, 0.22, 0.1);
+              }
+
               rootGroup.add(vrm.scene);
 
-              // Attach hit proxy colliders directly to the VRM humanoid bone nodes
+              // Attach hit proxy colliders directly to VRM humanoid bones
               const colliderMat = new THREE.MeshBasicMaterial({
                 transparent: true,
                 opacity: 0.0,
@@ -599,6 +1151,7 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
                     colMesh.userData = {
                       npcId,
                       bodyPartKey: def.boneKey,
+                      displayName: def.displayName,
                       outfitName: outfit.name,
                       boneNode,
                     };
@@ -610,74 +1163,91 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
                   }
                 }
               }
+
+              newNPC.hairBones = collectHairBones(vrm);
+
+              const mixer = new THREE.AnimationMixer(vrm.scene);
+              newNPC.mixer = mixer;
+
+              loadRetargetedClipFromFBX('mixamo_walk.fbx', vrm).then((clip) => {
+                if (clip && newNPC.mixer === mixer) {
+                  const act = mixer.clipAction(clip);
+                  act.setLoop(THREE.LoopRepeat, Infinity);
+                }
+              });
+
+              const initialStandby = STANDBY_ANIMATION_FILES[Math.floor(Math.random() * STANDBY_ANIMATION_FILES.length)];
+              loadRetargetedClipFromFBX(initialStandby, vrm).then((clip) => {
+                if (clip && newNPC.mixer === mixer && !newNPC.isDead && !newNPC.isRagdoll) {
+                  const act = mixer.clipAction(clip);
+                  act.setLoop(THREE.LoopRepeat, Infinity);
+                  act.play();
+                  newNPC.currentActionName = initialStandby;
+                }
+              });
+
+              setupNPCRagdoll(newNPC);
+              vrm.update(0);
             }
           },
-          undefined,
           (err) => {
-            console.warn(`Failed to load VRM for ${outfit.name}:`, err);
+            console.warn(`Failed to parse VRM for ${outfit.name}:`, err);
             newNPC.isLoading = false;
           }
         );
-      }
+      });
 
       npcsRef.current.push(newNPC);
-      setActiveNpcCount(npcsRef.current.length);
+    },
+    [setupNPCRagdoll]
+  );
+
+  // Helper to play retargeted animation on an NPC
+  const playNPCAnimation = useCallback(
+    (npc: NPCEntity, fbxFileName: string, loop: boolean = true, clamp: boolean = false) => {
+      if (!npc.vrm || !npc.mixer || npc.isObliterated) return;
+      loadRetargetedClipFromFBX(fbxFileName, npc.vrm).then((clip) => {
+        if (!clip || !npc.mixer || npc.isObliterated) return;
+        const mixer = npc.mixer;
+        const act = mixer.clipAction(clip);
+        if (loop) {
+          act.setLoop(THREE.LoopRepeat, Infinity);
+          act.clampWhenFinished = false;
+        } else {
+          act.setLoop(THREE.LoopOnce, 1);
+          act.clampWhenFinished = clamp;
+        }
+        mixer.stopAllAction();
+        act.reset().play();
+        npc.currentActionName = fbxFileName;
+      });
     },
     []
   );
 
-  // Clear all NPCs
-  const clearAllNPCs = useCallback(() => {
-    const scene = sceneRef.current;
-    if (!scene) return;
+  // Helper to play player attack animations (disables movement during action)
+  const playPlayerAttackAnim = useCallback((fbxFileName: string) => {
+    const vrm = playerVrmRef.current;
+    const mixer = playerMixerRef.current;
+    if (!vrm || !mixer) return;
 
-    for (const npc of npcsRef.current) {
-      scene.remove(npc.rootGroup);
-    }
-    npcsRef.current = [];
+    loadRetargetedClipFromFBX(fbxFileName, vrm).then((clip) => {
+      if (!clip || playerMixerRef.current !== mixer) return;
+      const act = mixer.clipAction(clip);
+      act.setLoop(THREE.LoopOnce, 1);
+      act.clampWhenFinished = false;
 
-    // Clear gibs
-    for (const gib of gibsRef.current) {
-      scene.remove(gib.mesh);
-    }
-    gibsRef.current = [];
+      // Lock player movement during attack animation
+      isPlayerAttackingRef.current = true;
+      act.reset().fadeIn(0.12).play();
 
-    // Clear blood decals
-    if (bloodDecalsGroupRef.current) {
-      while (bloodDecalsGroupRef.current.children.length > 0) {
-        const c = bloodDecalsGroupRef.current.children[0];
-        bloodDecalsGroupRef.current.remove(c);
-      }
-      bloodDecalsCountRef.current = 0;
-    }
-
-    setActiveNpcCount(0);
-    setTargetedPartUI(null);
+      const duration = clip.duration || 1.0;
+      setTimeout(() => {
+        act.fadeOut(0.2);
+        isPlayerAttackingRef.current = false;
+      }, duration * 950);
+    });
   }, []);
-
-  // Spawn preset circle arena of real VRMs
-  const spawnCircleArena = useCallback(() => {
-    clearAllNPCs();
-    const count = 6;
-    const radius = 4.2;
-    const pool = ALL_WARDROBE_OUTFITS;
-
-    for (let i = 0; i < count; i++) {
-      const angle = (i / count) * Math.PI * 2;
-      const outfit = pool[i % pool.length];
-      const offsetX = Math.cos(angle) * radius;
-      const offsetZ = Math.sin(angle) * radius - 3.5;
-      spawnNPC(outfit, { x: offsetX, z: offsetZ });
-    }
-  }, [clearAllNPCs, spawnNPC]);
-
-  // Spawn 3 default VRM dummies in front
-  const spawnThreeDummies = useCallback(() => {
-    const pool = ALL_WARDROBE_OUTFITS;
-    spawnNPC(pool[0], { x: -1.6, z: -2.5 });
-    spawnNPC(pool[1] || pool[0], { x: 0, z: -3.0 });
-    spawnNPC(pool[2] || pool[0], { x: 1.6, z: -2.5 });
-  }, [spawnNPC]);
 
   // ----------------------------------------------------
   // Liquid Blood Particle Emitter & Floor Decals
@@ -716,12 +1286,12 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
   );
 
   const createFloorBloodDecal = useCallback(
-    (pos: THREE.Vector3, radius: number = 0.25) => {
+    (pos: THREE.Vector3, radius: number = 0.4) => {
       const group = bloodDecalsGroupRef.current;
-      if (!group || bloodDecalsCountRef.current > 180) return;
+      if (!group || bloodDecalsCountRef.current > 120) return;
 
       const colors = BLOOD_COLORS[bloodStyleRef.current];
-      const decalGeo = new THREE.CircleGeometry(radius * (0.7 + Math.random() * 0.6), 16);
+      const decalGeo = new THREE.CircleGeometry(radius, 12);
       const decalMat = new THREE.MeshBasicMaterial({
         color: colors.drip,
         transparent: true,
@@ -735,6 +1305,119 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
       decalMesh.scale.set(1 + Math.random() * 0.5, 1 + Math.random() * 0.5, 1);
       group.add(decalMesh);
       bloodDecalsCountRef.current++;
+    },
+    []
+  );
+
+  // ----------------------------------------------------
+  // Helper: Sever Body Part with Wireframe Damage & Extraction
+  // ----------------------------------------------------
+  const severBodyPartWithWireframe = useCallback(
+    (
+      npc: NPCEntity,
+      partKey: BodyPartKey,
+      punchDir: THREE.Vector3,
+      forceMultiplier: number = 1.0
+    ): number => {
+      const scene = sceneRef.current;
+      if (!scene || !npc.vrm) return 0;
+
+      const part = npc.parts[partKey];
+      if (!part || part.isDetached) return 0;
+
+      part.isDetached = true;
+      part.fountainTimer = 4.5;
+
+      const colors = BLOOD_COLORS[bloodStyleRef.current];
+      const worldPos = new THREE.Vector3();
+      const def = VRM_COLLIDER_DEFS.find((d) => d.boneKey === partKey);
+      const stumpRadius = def?.stumpRadius || 0.08;
+      let affectedVerticesCount = 0;
+
+      if (part.boneNode) {
+        part.boneNode.getWorldPosition(worldPos);
+
+        // 1. Calculate Wireframe Damage across NPC SkinnedMeshes
+        npc.vrm.scene.traverse((obj) => {
+          if ((obj as THREE.SkinnedMesh).isSkinnedMesh) {
+            const mesh = obj as THREE.SkinnedMesh;
+            const posAttr = mesh.geometry.attributes.position;
+            if (posAttr) {
+              const v = new THREE.Vector3();
+              const meshMatrix = mesh.matrixWorld;
+              const step = Math.max(1, Math.floor(posAttr.count / 150));
+              for (let i = 0; i < posAttr.count; i += step) {
+                v.fromBufferAttribute(posAttr, i);
+                v.applyMatrix4(meshMatrix);
+                if (v.distanceTo(worldPos) < stumpRadius * 2.8) {
+                  affectedVerticesCount++;
+                }
+              }
+            }
+          }
+        });
+
+        // 2. Collapse and remove affected vertices out of NPC body by scaling bone to 0
+        part.boneNode.scale.set(0.0001, 0.0001, 0.0001);
+
+        // 3. Flesh stump cap at joint
+        const stumpCap = createFleshCapMesh(stumpRadius, colors.drip);
+        part.boneNode.parent?.add(stumpCap);
+        stumpCap.position.copy(part.boneNode.position);
+        part.stumpCap = stumpCap;
+      } else {
+        worldPos.copy(npc.position).add(new THREE.Vector3(0, 1.2, 0));
+      }
+
+      // 4. Create Detached Physical 3D Limb Object with Wireframe Damage Overlay
+      const gibGeo = def ? def.geo.clone() : new THREE.CylinderGeometry(0.06, 0.05, 0.25, 8);
+      const gibMat = new THREE.MeshStandardMaterial({
+        color: colors.base,
+        roughness: 0.8,
+        metalness: 0.0,
+      });
+      const gibMesh = new THREE.Mesh(gibGeo, gibMat);
+      gibMesh.position.copy(worldPos);
+
+      // Glowing Wireframe damage edge lines
+      const wireGeo = new THREE.WireframeGeometry(gibGeo);
+      const wireMat = new THREE.LineBasicMaterial({
+        color: 0xff0055,
+        transparent: true,
+        opacity: 0.85,
+      });
+      const wireLines = new THREE.LineSegments(wireGeo, wireMat);
+      gibMesh.add(wireLines);
+
+      scene.add(gibMesh);
+
+      // 5. Dynamic outward velocity & angular impulse
+      const gibVel = punchDir
+        .clone()
+        .multiplyScalar(6.5 * forceMultiplier)
+        .add(
+          new THREE.Vector3(
+            (Math.random() - 0.5) * 4.0,
+            2.8 + Math.random() * 3.5,
+            (Math.random() - 0.5) * 4.0
+          )
+        );
+
+      gibsRef.current.push({
+        mesh: gibMesh,
+        position: worldPos.clone(),
+        velocity: gibVel,
+        angularVelocity: new THREE.Vector3(
+          (Math.random() - 0.5) * 16,
+          (Math.random() - 0.5) * 16,
+          (Math.random() - 0.5) * 16
+        ),
+        life: 0,
+        maxLife: 22,
+        isFleshCap: true,
+      });
+
+      return affectedVerticesCount;
     },
     []
   );
@@ -755,125 +1438,85 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
       setHitMarkerActive(true);
       setTimeout(() => setHitMarkerActive(false), 220);
 
-      // Level 1: Light Tap / Push (< 0.3s)
-      if (chargeLevel === 1) {
-        audio.playLightHit();
-        setHitMessage(`PUSH [${npc.name}: ${partKey.toUpperCase()}]`);
+      let damageDealt = 0;
 
-        npc.velocity.add(punchDir.clone().multiplyScalar(1.8));
-        npc.staggerVelocity += 4.5;
-        emitBloodSpray(npc.position.clone().add(new THREE.Vector3(0, 1.2, 0)), punchDir, 4, 1.2, 0.3);
-      }
+      // 1. NPC IMMEDIATELY STOPS WALKING AFTER GETTING HIT
+      npc.hasTakenDamage = true;
+      npc.wanderState = 'idle';
+      npc.wanderTimer = 999999;
+      npc.velocity.set(0, 0, 0);
 
-      // Level 2: Heavy Strike & Blood Stain (0.3s - 0.8s)
-      else if (chargeLevel === 2) {
+      const isGroinAttack = partKey === 'hips';
+
+      if (isGroinAttack) {
+        playPlayerAttackAnim('mixamo_boxing_groinkick.fbx');
+        playNPCAnimation(npc, 'mixamo_groin_hurt.fbx', false, true);
+        damageDealt = 45;
         audio.playHeavyHit();
-        setHitMessage(`HEAVY STRIKE [${npc.name}] - BLOOD STAIN`);
-
-        npc.velocity.add(punchDir.clone().multiplyScalar(5.5));
-        npc.staggerVelocity += 12.0;
-        npc.health = Math.max(20, npc.health - 25);
-        npc.bloodStainsCount++;
-
-        emitBloodSpray(
-          npc.position.clone().add(new THREE.Vector3(0, 1.1, 0)),
-          punchDir,
-          24,
-          4.5,
-          0.6
-        );
-        createFloorBloodDecal(npc.position, 0.35);
-      }
-
-      // Level 3: Dismemberment of Actual VRM Limb (0.8s - 1.5s)
-      else if (chargeLevel === 3) {
-        audio.playDismemberHit();
-        setHitMessage(`DISMEMBERED! [${partKey.toUpperCase()} SEVERED]`);
-
-        screenShakeRef.current = 0.25;
-        const part = npc.parts[partKey];
-
-        if (part && !part.isDetached) {
-          part.isDetached = true;
-          part.fountainTimer = 3.5;
-
-          const colors = BLOOD_COLORS[bloodStyleRef.current];
-          const worldPos = new THREE.Vector3();
-
-          // If VRM bone exists, get world position and scale it to 0 to hide on VRM!
-          if (part.boneNode) {
-            part.boneNode.getWorldPosition(worldPos);
-            // Scaling the bone to 0.0001 hides the mesh vertices assigned to this bone
-            part.boneNode.scale.set(0.0001, 0.0001, 0.0001);
-
-            // Stump flesh cap attached to bone parent
-            const stumpCap = createFleshCapMesh(0.08, colors.drip);
-            part.boneNode.parent?.add(stumpCap);
-            stumpCap.position.copy(part.boneNode.position);
-            part.stumpCap = stumpCap;
-          } else {
-            worldPos.copy(npc.position).add(new THREE.Vector3(0, 1.2, 0));
-          }
-
-          // Spawn flying severed limb gib piece
-          const def = VRM_COLLIDER_DEFS.find((d) => d.boneKey === partKey);
-          const gibGeo = def ? def.geo.clone() : new THREE.CylinderGeometry(0.06, 0.05, 0.25, 8);
-          const gibMat = new THREE.MeshStandardMaterial({
-            color: colors.base,
-            roughness: 0.3,
-            metalness: 0.1,
-          });
-          const gibMesh = new THREE.Mesh(gibGeo, gibMat);
-          gibMesh.position.copy(worldPos);
-
-          const severedCap = createFleshCapMesh(0.08, colors.base);
-          severedCap.position.set(0, 0.1, 0);
-          gibMesh.add(severedCap);
-
-          scene.add(gibMesh);
-
-          const gibVel = punchDir
-            .clone()
-            .multiplyScalar(6.5)
-            .add(new THREE.Vector3((Math.random() - 0.5) * 2, 2.8, (Math.random() - 0.5) * 2));
-
-          gibsRef.current.push({
-            mesh: gibMesh,
-            position: worldPos,
-            velocity: gibVel,
-            angularVelocity: new THREE.Vector3(
-              (Math.random() - 0.5) * 12,
-              (Math.random() - 0.5) * 12,
-              (Math.random() - 0.5) * 12
-            ),
-            life: 0,
-            maxLife: 15,
-            isFleshCap: true,
-          });
-
-          emitBloodSpray(worldPos, punchDir, 45, 6.0, 0.7);
-          createFloorBloodDecal(worldPos, 0.55);
+        setHitMessage(`GROIN KICK! [${npc.name}: -${damageDealt} HP]`);
+      } else {
+        if (chargeLevel === 1) {
+          playPlayerAttackAnim('mixamo_headbutt.fbx');
+          damageDealt = 25;
+          audio.playLightHit();
+          setHitMessage(`HEADBUTT [${npc.name}: -${damageDealt} HP]`);
+        } else if (chargeLevel === 2) {
+          playPlayerAttackAnim('mixamo_meleepunch.fbx');
+          damageDealt = 50;
+          audio.playHeavyHit();
+          setHitMessage(`MELEE PUNCH [${npc.name}: -${damageDealt} HP]`);
+        } else if (chargeLevel === 3) {
+          // LEVEL 3 ATTACK: IMMEDIATELY KILL NPC WITH DYING ANIMATION
+          playPlayerAttackAnim('mixamo_highkick.fbx');
+          damageDealt = 100;
+          audio.playDismemberHit();
+          setHitMessage(`HIGH KICK FATALITY! [${npc.name} KILLED]`);
+        } else {
+          // LEVEL 4 ATTACK: DOOM OBLITERATION
+          playPlayerAttackAnim('mixamo_torchmelee.fbx');
+          damageDealt = 100;
+          audio.playObliterationBlast();
+          setHitMessage(`TORCH MELEE OBLITERATION! [${npc.name} PULPED]`);
         }
-
-        npc.velocity.add(punchDir.clone().multiplyScalar(7.5));
-        npc.isRagdoll = true;
-        npc.health = Math.max(5, npc.health - 50);
       }
 
-      // Level 4: Doom Eternal Obliteration (1.5s+ Max)
-      else if (chargeLevel === 4) {
-        audio.playObliterationBlast();
-        setHitMessage(`DOOM OBLITERATION! [${npc.name} PULPED]`);
+      // Impulse velocity
+      const forceMultiplier = chargeLevel === 4 ? 9.5 : chargeLevel === 3 ? 7.5 : chargeLevel === 2 ? 5.0 : 3.0;
+      npc.velocity.add(punchDir.clone().multiplyScalar(forceMultiplier));
+      npc.staggerVelocity += forceMultiplier * 3.5;
 
-        screenShakeRef.current = 0.55;
+      emitBloodSpray(
+        npc.position.clone().add(new THREE.Vector3(0, 1.1, 0)),
+        punchDir,
+        chargeLevel * 16,
+        chargeLevel * 2.4,
+        0.5
+      );
+      if (chargeLevel >= 2) {
+        createFloorBloodDecal(npc.position, 0.35 * chargeLevel);
+      }
+
+      // Dismemberment on Level 3: calculate wireframe vertices and detach targeted limb
+      if (chargeLevel === 3 && !npc.isDead) {
+        severBodyPartWithWireframe(npc, partKey, punchDir, 1.1);
+      }
+
+      // Level 4 Obliteration: detach ALL body parts and spread them around!
+      if (chargeLevel === 4) {
+        screenShakeRef.current = 0.65;
         npc.isObliterated = true;
+        npc.isDead = true;
         npc.isRagdoll = true;
-        npc.health = 0;
 
         const origin = npc.position.clone().add(new THREE.Vector3(0, 0.9, 0));
         const colors = BLOOD_COLORS[bloodStyleRef.current];
 
-        // Explode into 12 pulpy gib chunks
+        // Detach EVERY body part and spread around the maze with wireframe extraction
+        for (const def of VRM_COLLIDER_DEFS) {
+          severBodyPartWithWireframe(npc, def.boneKey, punchDir, 1.4);
+        }
+
+        // Additional 20 meat gib chunks flying in 360-degree radius
         const gibGeos = [
           new THREE.SphereGeometry(0.12, 8, 8),
           new THREE.BoxGeometry(0.18, 0.14, 0.12),
@@ -882,55 +1525,109 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
           new THREE.BoxGeometry(0.14, 0.1, 0.08),
         ];
 
-        for (let i = 0; i < 12; i++) {
+        for (let i = 0; i < 20; i++) {
           const geo = gibGeos[i % gibGeos.length];
           const mat = new THREE.MeshStandardMaterial({
             color: Math.random() > 0.3 ? colors.base : colors.drip,
-            roughness: 0.3,
-            metalness: 0.1,
+            roughness: 0.8,
+            metalness: 0.0,
           });
           const gibMesh = new THREE.Mesh(geo, mat);
           gibMesh.position.copy(origin);
           scene.add(gibMesh);
 
-          const gibVel = new THREE.Vector3(
-            (Math.random() - 0.5) * 8.5 + punchDir.x * 6,
-            2.5 + Math.random() * 5.5,
-            (Math.random() - 0.5) * 8.5 + punchDir.z * 6
-          );
+          const burstAngle = Math.random() * Math.PI * 2;
+          const radial = new THREE.Vector3(Math.cos(burstAngle), 0, Math.sin(burstAngle));
+          const gibVel = radial.multiplyScalar(4.5 + Math.random() * 6.5)
+            .add(punchDir.clone().multiplyScalar(4.0))
+            .add(new THREE.Vector3(0, 2.5 + Math.random() * 5.5, 0));
 
           gibsRef.current.push({
             mesh: gibMesh,
             position: origin.clone(),
             velocity: gibVel,
             angularVelocity: new THREE.Vector3(
-              (Math.random() - 0.5) * 16,
-              (Math.random() - 0.5) * 16,
-              (Math.random() - 0.5) * 16
+              (Math.random() - 0.5) * 18,
+              (Math.random() - 0.5) * 18,
+              (Math.random() - 0.5) * 18
             ),
             life: 0,
-            maxLife: 20,
+            maxLife: 24,
             isFleshCap: true,
           });
         }
 
-        // Hide actual VRM model
         if (npc.vrm) {
           npc.vrm.scene.visible = false;
         }
-        npc.rootGroup.visible = false;
+        scene.remove(npc.rootGroup);
 
-        emitBloodSpray(origin, punchDir, 90, 8.5, 1.2);
-        createFloorBloodDecal(npc.position, 0.95);
-        createFloorBloodDecal(
-          npc.position.clone().add(new THREE.Vector3(0.4, 0, 0.3)),
-          0.65
-        );
+        emitBloodSpray(origin, punchDir, 120, 9.5, 1.4);
+        createFloorBloodDecal(npc.position, 1.1);
+        createFloorBloodDecal(npc.position.clone().add(new THREE.Vector3(0.5, 0, 0.4)), 0.75);
+        createFloorBloodDecal(npc.position.clone().add(new THREE.Vector3(-0.5, 0, -0.4)), 0.65);
+      } else {
+        // Deduct health
+        npc.health = Math.max(0, npc.health - damageDealt);
+        npc.bloodStainsCount++;
+
+        // Check if dead (Level 3 immediately kills, or health <= 0)
+        if ((npc.health <= 0 || chargeLevel === 3) && !npc.isDead) {
+          npc.isDead = true;
+          npc.health = 0;
+          npc.dyingTimer = 2.0;
+
+          const npcForward = new THREE.Vector3(0, 0, -1).applyEuler(npc.rotation);
+          const attackAngleDot = punchDir.dot(npcForward);
+
+          if (chargeLevel >= 2) {
+            if (attackAngleDot < -0.1) {
+              playNPCAnimation(npc, 'mixamo_dying_flyback.fbx', false, true);
+            } else {
+              playNPCAnimation(npc, 'mixamo_dying_slideforward.fbx', false, true);
+            }
+          } else {
+            playNPCAnimation(npc, 'mixamo_dying.fbx', false, true);
+          }
+        } else if (npc.health > 0 && !isGroinAttack) {
+          playNPCAnimation(npc, 'mixamo_idle_injured.fbx', true, false);
+        } else if (npc.isDead) {
+          // If corpse is attacked again: switch immediately to free ragdoll!
+          npc.isRagdoll = true;
+          setupNPCRagdoll(npc);
+        }
+      }
+
+      flashNpcMaterials(npc);
+
+      // Damage Popup
+      if (cameraRef.current && containerRef.current) {
+        const hitScreenPos = npc.position.clone().add(new THREE.Vector3(0, 1.45, 0));
+        hitScreenPos.project(cameraRef.current);
+        const w = containerRef.current.clientWidth;
+        const h = containerRef.current.clientHeight;
+        const screenX = (hitScreenPos.x * 0.5 + 0.5) * w;
+        const screenY = (-hitScreenPos.y * 0.5 + 0.5) * h;
+
+        const popupId = `dmg-${Date.now()}-${Math.random()}`;
+        setDamagePopups((prev) => [
+          ...prev.slice(-6),
+          {
+            id: popupId,
+            text: `-${damageDealt}${chargeLevel >= 3 ? ' FATAL!' : ''}`,
+            x: screenX,
+            y: screenY,
+            color: chargeLevel === 4 ? '#ef4444' : chargeLevel === 3 ? '#f97316' : '#55d2f6',
+          },
+        ]);
+        setTimeout(() => {
+          setDamagePopups((prev) => prev.filter((p) => p.id !== popupId));
+        }, 1100);
       }
 
       setTimeout(() => setHitMessage(null), 2500);
     },
-    [emitBloodSpray, createFloorBloodDecal]
+    [emitBloodSpray, createFloorBloodDecal, playPlayerAttackAnim, playNPCAnimation, setupNPCRagdoll, severBodyPartWithWireframe]
   );
 
   // ----------------------------------------------------
@@ -945,15 +1642,15 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
     let rafId = 0;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0e1017);
-    scene.fog = new THREE.FogExp2(0x0e1017, 0.038);
+    scene.background = new THREE.Color(0x141824);
+    scene.fog = new THREE.FogExp2(0x141824, 0.007);
     sceneRef.current = scene;
 
     const camera = new THREE.PerspectiveCamera(
       52,
       container.clientWidth / container.clientHeight,
       0.1,
-      60.0
+      95.0
     );
     cameraRef.current = camera;
 
@@ -970,61 +1667,101 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     rendererRef.current = renderer;
 
-    // Lighting
-    scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+    // Bright, optimized lighting (no shiny glare)
+    scene.add(new THREE.AmbientLight(0xffffff, 1.8));
 
-    const keyLight = new THREE.DirectionalLight(0xffffff, 1.3);
-    keyLight.position.set(6, 12, 8);
+    const keyLight = new THREE.DirectionalLight(0xffffff, 1.5);
+    keyLight.position.set(12, 22, 14);
     keyLight.castShadow = true;
     keyLight.shadow.mapSize.width = 2048;
     keyLight.shadow.mapSize.height = 2048;
     keyLight.shadow.camera.near = 0.5;
-    keyLight.shadow.camera.far = 35;
-    keyLight.shadow.camera.left = -12;
-    keyLight.shadow.camera.right = 12;
-    keyLight.shadow.camera.top = 12;
-    keyLight.shadow.camera.bottom = -12;
+    keyLight.shadow.camera.far = 70;
+    keyLight.shadow.camera.left = -25;
+    keyLight.shadow.camera.right = 25;
+    keyLight.shadow.camera.top = 25;
+    keyLight.shadow.camera.bottom = -25;
     scene.add(keyLight);
 
-    const rimLight = new THREE.DirectionalLight(0xff1e56, 1.1);
-    rimLight.position.set(-8, 5, -8);
-    scene.add(rimLight);
-
-    const cyanFillLight = new THREE.DirectionalLight(0x55d2f6, 0.7);
-    cyanFillLight.position.set(8, 4, -6);
+    const cyanFillLight = new THREE.DirectionalLight(0xa5e8fc, 1.1);
+    cyanFillLight.position.set(-15, 10, -12);
     scene.add(cyanFillLight);
 
-    // Arena Floor
-    const floorGeo = new THREE.PlaneGeometry(28, 28, 28, 28);
+    // Warm & Cyan Corridor Point Lights throughout the Maze
+    const corridorLights = [
+      { x: 0, z: 0, color: 0x55d2f6 },
+      { x: -14, z: -14, color: 0xffe8c2 },
+      { x: 14, z: 14, color: 0x55d2f6 },
+      { x: -14, z: 14, color: 0xffe8c2 },
+      { x: 14, z: -14, color: 0x55d2f6 },
+      { x: 0, z: -14, color: 0xa8f0e5 },
+      { x: 0, z: 14, color: 0xffd1b3 },
+      { x: -14, z: 0, color: 0x55d2f6 },
+      { x: 14, z: 0, color: 0xffe8c2 },
+    ];
+
+    corridorLights.forEach((lightDef) => {
+      const pl = new THREE.PointLight(lightDef.color, 2.2, 18, 1.0);
+      pl.position.set(lightDef.x, 2.8, lightDef.z);
+      scene.add(pl);
+    });
+
+    // ====================================================
+    // Procedural Maze Construction (Matte Optimized Surfaces)
+    // ====================================================
+    const maze = mazeRef.current;
+    const mazeTotalSpan = (maze.size + 2) * maze.cellSize;
+
+    // Floor Mesh: Matte non-shiny optimized material displaced slightly for robust clearance
+    const floorGeo = new THREE.PlaneGeometry(mazeTotalSpan, mazeTotalSpan);
     const floorMat = new THREE.MeshStandardMaterial({
-      color: 0x141824,
-      roughness: 0.35,
-      metalness: 0.5,
+      color: 0x1e2433,
+      roughness: 0.95,
+      metalness: 0.0,
     });
     const floor = new THREE.Mesh(floorGeo, floorMat);
     floor.rotation.x = -Math.PI / 2;
+    floor.position.y = -0.02; // Displaced slightly down so models never visually clip
     floor.receiveShadow = true;
     scene.add(floor);
 
-    // Floor Grid
-    const grid = new THREE.GridHelper(28, 28, 0x55d2f6, 0x242d3d);
-    grid.position.y = 0.002;
-    grid.material.opacity = 0.3;
+    // Floor Grid Helper
+    const grid = new THREE.GridHelper(mazeTotalSpan, Math.floor(mazeTotalSpan / maze.cellSize), 0x55d2f6, 0x2b3447);
+    grid.position.y = 0.001;
+    grid.material.opacity = 0.35;
     grid.material.transparent = true;
     scene.add(grid);
 
-    // Ring Perimeter
-    const ringGeo = new THREE.RingGeometry(5.2, 5.35, 64);
-    const ringMat = new THREE.MeshBasicMaterial({
-      color: 0xff3b5c,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0.6,
+    // Wall Mesh: Matte non-shiny optimized material
+    const wallGeo = new THREE.BoxGeometry(maze.cellSize, MAZE_WALL_HEIGHT, maze.cellSize);
+    const wallMat = new THREE.MeshStandardMaterial({
+      color: 0x2a3245,
+      roughness: 0.95,
+      metalness: 0.0,
     });
-    const ring = new THREE.Mesh(ringGeo, ringMat);
-    ring.rotation.x = -Math.PI / 2;
-    ring.position.y = 0.004;
-    scene.add(ring);
+
+    const wallMesh = new THREE.InstancedMesh(wallGeo, wallMat, maze.walls.length);
+    wallMesh.castShadow = true;
+    wallMesh.receiveShadow = true;
+
+    const dummyWallMat = new THREE.Matrix4();
+    maze.walls.forEach((w, idx) => {
+      dummyWallMat.setPosition(w.x, MAZE_WALL_HEIGHT / 2, w.z);
+      wallMesh.setMatrixAt(idx, dummyWallMat);
+    });
+    wallMesh.instanceMatrix.needsUpdate = true;
+    scene.add(wallMesh);
+
+    // Lightweight Emissive Wall Trim Lines
+    const trimGeo = new THREE.BoxGeometry(maze.cellSize * 0.98, 0.06, maze.cellSize * 0.98);
+    const trimMat = new THREE.MeshBasicMaterial({ color: 0x55d2f6, transparent: true, opacity: 0.75 });
+    const trimMesh = new THREE.InstancedMesh(trimGeo, trimMat, maze.walls.length);
+    maze.walls.forEach((w, idx) => {
+      dummyWallMat.setPosition(w.x, MAZE_WALL_HEIGHT - 0.03, w.z);
+      trimMesh.setMatrixAt(idx, dummyWallMat);
+    });
+    trimMesh.instanceMatrix.needsUpdate = true;
+    scene.add(trimMesh);
 
     // Blood Decals Container
     const decalsGroup = new THREE.Group();
@@ -1046,52 +1783,111 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
     scene.add(playerRoot);
     playerRootRef.current = playerRoot;
 
-    // Load Actual Player VRM: "hana_v1.2_darkpain_vrm1.vrm"
+    // Load Player VRM
     const gltfLoader = new GLTFLoader();
     gltfLoader.register((parser) => new VRMLoaderPlugin(parser));
-    const playerModelUrl = PLAYER_OUTFIT.modelUrl || PLAYER_OUTFIT.fallbackModelUrl;
 
-    if (playerModelUrl) {
-      gltfLoader.load(
-        playerModelUrl,
+    fetchVRMBuffer(PLAYER_OUTFIT).then((buf) => {
+      if (isDisposed || !buf) return;
+
+      gltfLoader.parse(
+        buf,
+        '',
         (gltf) => {
           if (isDisposed) return;
           const vrm = gltf.userData.vrm as VRM;
           if (vrm) {
             try {
               VRMUtils.removeUnnecessaryVertices(gltf.scene);
-              VRMUtils.combineSkeletons(gltf.scene);
               VRMUtils.rotateVRM0(vrm);
             } catch {}
             vrm.scene.position.set(0, 0, 0);
             vrm.scene.rotation.set(0, 0, 0);
+
+            // Auto-calibrate feet level with ground
+            vrm.scene.updateMatrixWorld(true);
+            const bbox = new THREE.Box3().setFromObject(vrm.scene);
+            if (bbox.min.y < 0.0) {
+              vrm.scene.position.y = -bbox.min.y;
+            }
+
             vrm.scene.traverse((obj) => {
               obj.frustumCulled = false;
               if ((obj as THREE.Mesh).isMesh) {
                 obj.castShadow = true;
               }
             });
+
+            // Resting arm stance
+            if (vrm.humanoid) {
+              const leftUpperArm = vrm.humanoid.getNormalizedBoneNode('leftUpperArm');
+              const rightUpperArm = vrm.humanoid.getNormalizedBoneNode('rightUpperArm');
+              const leftLowerArm = vrm.humanoid.getNormalizedBoneNode('leftLowerArm');
+              const rightLowerArm = vrm.humanoid.getNormalizedBoneNode('rightLowerArm');
+
+              if (leftUpperArm) leftUpperArm.rotation.set(0.12, 0.05, -1.25);
+              if (rightUpperArm) rightUpperArm.rotation.set(0.12, -0.05, 1.25);
+              if (leftLowerArm) leftLowerArm.rotation.set(0.0, -0.22, -0.1);
+              if (rightLowerArm) rightLowerArm.rotation.set(0.0, 0.22, 0.1);
+            }
+
             playerRoot.add(vrm.scene);
             playerVrmRef.current = vrm;
+            playerHairBonesRef.current = collectHairBones(vrm);
+            vrm.update(0);
+
+            const mixer = new THREE.AnimationMixer(vrm.scene);
+            playerMixerRef.current = mixer;
+
+            loadRetargetedClipFromFBX('mixamo_walk.fbx', vrm).then((clip) => {
+              if (clip && playerMixerRef.current === mixer) {
+                const act = mixer.clipAction(clip);
+                act.setLoop(THREE.LoopRepeat, Infinity);
+                playerActionsRef.current.walk = act;
+                if (activePlayerActionRef.current === 'walk') {
+                  act.play();
+                }
+              }
+            });
+
+            loadRetargetedClipFromFBX('mixamo_jump.fbx', vrm).then((clip) => {
+              if (clip && playerMixerRef.current === mixer) {
+                const act = mixer.clipAction(clip);
+                act.setLoop(THREE.LoopOnce, 1);
+                act.clampWhenFinished = true;
+                playerActionsRef.current.jump = act;
+              }
+            });
+
+            loadRetargetedClipFromFBX('mixamo_idle.fbx', vrm).then((clip) => {
+              if (clip && playerMixerRef.current === mixer) {
+                const act = mixer.clipAction(clip);
+                act.setLoop(THREE.LoopRepeat, Infinity);
+                playerActionsRef.current.idle = act;
+                if (activePlayerActionRef.current === 'idle') {
+                  act.play();
+                }
+              }
+            });
           }
-          setIsPlayerLoading(false);
         },
-        undefined,
-        () => {
-          setIsPlayerLoading(false);
+        (err) => {
+          console.warn('Failed to parse player VRM:', err);
         }
       );
-    } else {
-      setIsPlayerLoading(false);
-    }
+    });
 
-    // Spawn Initial Default VRM Dummies
-    spawnThreeDummies();
+    // Spawn 4 initial natural NPCs in open areas
+    for (let i = 0; i < 4; i++) {
+      const outfit = ALL_WARDROBE_OUTFITS[i % ALL_WARDROBE_OUTFITS.length];
+      spawnNPC(outfit);
+    }
 
     // --------------------------------------------------
     // Animation & Physics Loop (60 FPS)
     // --------------------------------------------------
     let lastTime = performance.now();
+    let naturalSpawnTimer = 0;
 
     const animate = () => {
       rafId = requestAnimationFrame(animate);
@@ -1103,93 +1899,118 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
       if (isSlowMoRef.current) dt *= 0.28;
 
       const playerPos = playerPosRef.current;
+      playerPrevPosRef.current.copy(playerPos);
       const keys = keysRef.current;
+      const currentMaze = mazeRef.current;
 
-      // 1. Player Movement & Action Camera
+      // 0. Natural Spawner (Max 10 living NPCs)
+      naturalSpawnTimer += dt;
+      if (naturalSpawnTimer > 3.5) {
+        naturalSpawnTimer = 0;
+        const livingCount = npcsRef.current.filter((n) => !n.isDead && !n.isObliterated).length;
+        if (livingCount < 10) {
+          const randomOutfit = ALL_WARDROBE_OUTFITS[Math.floor(Math.random() * ALL_WARDROBE_OUTFITS.length)];
+          spawnNPC(randomOutfit);
+        }
+      }
+
+      // Clean up obliterated NPCs
+      npcsRef.current = npcsRef.current.filter((n) => {
+        if (n.isObliterated) {
+          if (n.rootGroup.parent) scene.remove(n.rootGroup);
+          return false;
+        }
+        return true;
+      });
+
+      // 1. Player Movement & Input
       const camYaw = cameraYawRef.current;
-      const forward = new THREE.Vector3(-Math.sin(camYaw), 0, -Math.cos(camYaw));
-      const right = new THREE.Vector3(Math.cos(camYaw), 0, -Math.sin(camYaw));
+      const fwd = new THREE.Vector3(-Math.sin(camYaw), 0, -Math.cos(camYaw));
+      const rgt = new THREE.Vector3(Math.cos(camYaw), 0, -Math.sin(camYaw));
       const moveDir = new THREE.Vector3();
 
-      if (keys.KeyW) moveDir.add(forward);
-      if (keys.KeyS) moveDir.sub(forward);
-      if (keys.KeyD) moveDir.add(right);
-      if (keys.KeyA) moveDir.sub(right);
+      if (keys.KeyW) moveDir.add(fwd);
+      if (keys.KeyS) moveDir.sub(fwd);
+      if (keys.KeyD) moveDir.add(rgt);
+      if (keys.KeyA) moveDir.sub(rgt);
 
-      const isMoving = moveDir.lengthSq() > 0.001;
-      const speed = keys.ShiftLeft ? 8.2 : 4.6;
+      let isMoving = moveDir.lengthSq() > 0.001;
+
+      // STRICT RULE: Disable player movement in ANY direction during attack animations!
+      if (isPlayerAttackingRef.current) {
+        isMoving = false;
+        moveDir.set(0, 0, 0);
+      }
+
+      const speed = keys.ShiftLeft ? 5.8 : 3.4;
 
       if (isMoving) {
         moveDir.normalize();
         playerPos.add(moveDir.clone().multiplyScalar(speed * dt));
 
-        playerPos.x = THREE.MathUtils.clamp(playerPos.x, -11.5, 11.5);
-        playerPos.z = THREE.MathUtils.clamp(playerPos.z, -11.5, 11.5);
+        resolveMazeCollision(playerPos, 0.42, currentMaze);
 
         const targetYaw = Math.atan2(moveDir.x, moveDir.z);
         let diff = targetYaw - playerYawRef.current;
         while (diff < -Math.PI) diff += Math.PI * 2;
         while (diff > Math.PI) diff -= Math.PI * 2;
         playerYawRef.current += diff * Math.min(1, 14 * dt);
-
-        playerAnimTimeRef.current += dt * (keys.ShiftLeft ? 12 : 7);
-      } else {
-        playerAnimTimeRef.current += dt * 2.0;
       }
 
-      // Animate Player Actual VRM Bones
-      const pVrm = playerVrmRef.current;
-      if (pVrm && pVrm.humanoid) {
-        const animT = playerAnimTimeRef.current;
-        const hips = pVrm.humanoid.getNormalizedBoneNode('hips');
-        const lLeg = pVrm.humanoid.getNormalizedBoneNode('leftUpperLeg');
-        const rLeg = pVrm.humanoid.getNormalizedBoneNode('rightUpperLeg');
-        const lArm = pVrm.humanoid.getNormalizedBoneNode('leftUpperArm');
-        const rArm = pVrm.humanoid.getNormalizedBoneNode('rightUpperArm');
-        const rLowerArm = pVrm.humanoid.getNormalizedBoneNode('rightLowerArm');
-        const chest = pVrm.humanoid.getNormalizedBoneNode('chest');
+      // Current floor/standing surface height at player's location (allows standing on wall tops!)
+      const targetGroundY = getMazeFloorHeightAt(playerPos.x, playerPos.z, currentMaze);
 
-        if (isMoving) {
-          if (lLeg) lLeg.rotation.x = Math.sin(animT) * 0.45;
-          if (rLeg) rLeg.rotation.x = -Math.sin(animT) * 0.45;
-          if (lArm) lArm.rotation.x = -Math.sin(animT) * 0.35;
-          if (!playerIsPunchingRef.current && rArm) {
-            rArm.rotation.x = Math.sin(animT) * 0.35;
-          }
-          if (hips) {
-            hips.position.y = Math.abs(Math.sin(animT * 2)) * 0.04;
-          }
-        } else {
-          if (lLeg) lLeg.rotation.x = THREE.MathUtils.lerp(lLeg.rotation.x, 0, 0.2);
-          if (rLeg) rLeg.rotation.x = THREE.MathUtils.lerp(rLeg.rotation.x, 0, 0.2);
-          if (lArm) lArm.rotation.x = THREE.MathUtils.lerp(lArm.rotation.x, 0, 0.2);
-          if (!playerIsPunchingRef.current && rArm) {
-            rArm.rotation.x = THREE.MathUtils.lerp(rArm.rotation.x, 0, 0.2);
-          }
-          if (chest) {
-            chest.rotation.x = Math.sin(animT) * 0.02;
-          }
+      // High Jump & Wall Landing Mechanics
+      if (isJumpingRef.current || playerPos.y > targetGroundY) {
+        playerVelYRef.current -= 16.0 * dt; // Gravity
+        playerPos.y += playerVelYRef.current * dt;
+
+        // Land on ground OR on wall top!
+        if (playerPos.y <= targetGroundY) {
+          playerPos.y = targetGroundY;
+          playerVelYRef.current = 0;
+          isJumpingRef.current = false;
         }
+      } else if (playerPos.y < targetGroundY) {
+        playerPos.y = targetGroundY;
+      }
 
-        // Punch Animation Strike
-        if (playerIsPunchingRef.current && rArm && rLowerArm) {
-          playerPunchProgressRef.current += dt * 5.5;
-          const punchProg = playerPunchProgressRef.current;
-          if (punchProg < 0.5) {
-            const ease = punchProg * 2;
-            rArm.rotation.x = THREE.MathUtils.lerp(0, -1.35, ease);
-            rArm.rotation.y = THREE.MathUtils.lerp(0, 0.25, ease);
-            rLowerArm.rotation.x = THREE.MathUtils.lerp(0, -0.3, ease);
-          } else if (punchProg < 1.0) {
-            const ease = (punchProg - 0.5) * 2;
-            rArm.rotation.x = THREE.MathUtils.lerp(-1.35, 0, ease);
-            rArm.rotation.y = THREE.MathUtils.lerp(0.25, 0, ease);
-            rLowerArm.rotation.x = THREE.MathUtils.lerp(-0.3, 0, ease);
-          } else {
-            playerIsPunchingRef.current = false;
-            playerPunchProgressRef.current = 0;
-            rArm.rotation.set(0, 0, 0);
-            rLowerArm.rotation.set(0, 0, 0);
+      // STRICT RULE: Never allow player position to drop below ground level!
+      if (playerPos.y < GROUND_FLOOR_Y) {
+        playerPos.y = GROUND_FLOOR_Y;
+      }
+
+      const playerVelH = playerPos.clone().sub(playerPrevPosRef.current).divideScalar(Math.max(dt, 0.001));
+
+      // Update Player Animation Mixer
+      if (playerMixerRef.current) {
+        playerMixerRef.current.update(dt);
+      }
+
+      // Transition animations (Walk / Idle / Jump)
+      if (!isPlayerAttackingRef.current) {
+        const targetAnimState = isJumpingRef.current || playerPos.y > targetGroundY + 0.1
+          ? 'jump'
+          : isMoving
+          ? 'walk'
+          : 'idle';
+
+        if (activePlayerActionRef.current !== targetAnimState) {
+          const prevAnim = activePlayerActionRef.current;
+          activePlayerActionRef.current = targetAnimState;
+
+          const prevAction = playerActionsRef.current[prevAnim];
+          const nextAction = playerActionsRef.current[targetAnimState];
+
+          if (nextAction) {
+            if (targetAnimState === 'jump') {
+              nextAction.reset().play();
+            } else {
+              nextAction.reset().fadeIn(0.15).play();
+            }
+            if (prevAction && prevAction !== nextAction) {
+              prevAction.fadeOut(0.15);
+            }
           }
         }
       }
@@ -1197,9 +2018,105 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
       if (playerRootRef.current) {
         playerRootRef.current.position.copy(playerPos);
         playerRootRef.current.rotation.y = playerYawRef.current;
+        playerRootRef.current.updateMatrixWorld(true);
+
+        // Strict per-frame ground clamp for player
+        clampEntityAboveGround(playerRootRef.current, playerVrmRef.current, targetGroundY);
       }
 
-      // 2. Camera Orbit
+      // Animation Mixing & Leg Movement Override When Moving
+      const pVrm = playerVrmRef.current;
+      if (pVrm && pVrm.humanoid) {
+        // Whenever movement is detected, apply procedural leg kinematics and override against other animations!
+        if (isMoving && !isJumpingRef.current) {
+          const strideFreq = keys.ShiftLeft ? 9.5 : 6.2;
+          const strideTime = now * 0.001 * strideFreq;
+          const strideAmp = keys.ShiftLeft ? 0.65 : 0.45;
+
+          const lUpLeg = pVrm.humanoid.getNormalizedBoneNode('leftUpperLeg');
+          const rUpLeg = pVrm.humanoid.getNormalizedBoneNode('rightUpperLeg');
+          const lLowLeg = pVrm.humanoid.getNormalizedBoneNode('leftLowerLeg');
+          const rLowLeg = pVrm.humanoid.getNormalizedBoneNode('rightLowerLeg');
+
+          if (lUpLeg && rUpLeg) {
+            const lStride = Math.sin(strideTime) * strideAmp;
+            const rStride = Math.sin(strideTime + Math.PI) * strideAmp;
+            lUpLeg.rotation.x = THREE.MathUtils.lerp(lUpLeg.rotation.x, lStride, 0.5);
+            rUpLeg.rotation.x = THREE.MathUtils.lerp(rUpLeg.rotation.x, rStride, 0.5);
+
+            if (lLowLeg && rLowLeg) {
+              const lKnee = Math.max(0, -Math.sin(strideTime)) * strideAmp * 1.3;
+              const rKnee = Math.max(0, -Math.sin(strideTime + Math.PI)) * strideAmp * 1.3;
+              lLowLeg.rotation.x = THREE.MathUtils.lerp(lLowLeg.rotation.x, lKnee, 0.5);
+              rLowLeg.rotation.x = THREE.MathUtils.lerp(rLowLeg.rotation.x, rKnee, 0.5);
+            }
+          }
+        }
+
+        // Dynamic Hair Physics for Player
+        const time = now * 0.003;
+        const forwardSpeed = playerVelH.length();
+
+        for (const track of playerHairBonesRef.current) {
+          const targetSwayX = -playerVelH.z * 0.05 + playerVelYRef.current * 0.03 + Math.sin(time * 6 + track.phase) * (0.04 * Math.min(forwardSpeed, 4));
+          const targetSwayZ = -playerVelH.x * 0.05 + Math.cos(time * 5 + track.phase) * 0.03;
+          track.swayX = THREE.MathUtils.lerp(track.swayX, targetSwayX, 0.15);
+          track.swayZ = THREE.MathUtils.lerp(track.swayZ, targetSwayZ, 0.15);
+
+          track.bone.rotation.x = track.initialRot.x + track.swayX;
+          track.bone.rotation.z = track.initialRot.z + track.swayZ;
+        }
+
+        // Keyframed Hand Reach IK for Grabbing Mechanism
+        const grabbed = grabbedNpcRef.current;
+        if (grabbed && grabbed.boneNode && pVrm.humanoid) {
+          const rArm = pVrm.humanoid.getNormalizedBoneNode('rightUpperArm');
+          const rLowerArm = pVrm.humanoid.getNormalizedBoneNode('rightLowerArm');
+          const rHand = pVrm.humanoid.getNormalizedBoneNode('rightHand');
+
+          const targetWorldPos = new THREE.Vector3();
+          grabbed.boneNode.getWorldPosition(targetWorldPos);
+
+          const shoulderWorldPos = new THREE.Vector3();
+          if (rArm) rArm.getWorldPosition(shoulderWorldPos);
+
+          const toTarget = targetWorldPos.clone().sub(shoulderWorldPos);
+          const reachDist = toTarget.length();
+          toTarget.normalize();
+
+          const localDir = toTarget.applyAxisAngle(new THREE.Vector3(0, 1, 0), -playerYawRef.current);
+
+          if (rArm) {
+            rArm.rotation.x = THREE.MathUtils.clamp(-localDir.y * 1.5 - 0.2, -1.8, 0.5);
+            rArm.rotation.y = THREE.MathUtils.clamp(localDir.x * 1.2, -1.2, 1.2);
+            rArm.rotation.z = THREE.MathUtils.clamp(0.2 - localDir.x * 0.5, -0.5, 1.0);
+          }
+          if (rLowerArm) {
+            rLowerArm.rotation.x = THREE.MathUtils.clamp(-0.2 - reachDist * 0.1, -1.0, 0.0);
+          }
+
+          // Lock grabbed target position to hand in world space
+          const handWorldPos = new THREE.Vector3();
+          if (rHand) {
+            rHand.getWorldPosition(handWorldPos);
+          } else {
+            handWorldPos.copy(playerPos).add(new THREE.Vector3(0, 1.1, 0)).add(moveDir.clone().multiplyScalar(0.8));
+          }
+
+          // Move corpse / target ragdoll along with hand
+          const targetP = grabbed.npc.ragdollParticles.find((part) => part.name === grabbed.partKey);
+          if (targetP) {
+            targetP.position.copy(handWorldPos);
+          } else {
+            grabbed.npc.position.copy(handWorldPos).sub(new THREE.Vector3(0, 0.8, 0));
+          }
+        }
+
+        pVrm.scene.updateMatrixWorld(true);
+        pVrm.update(dt);
+      }
+
+      // Camera Orbit
       let shakeOffsetX = 0;
       let shakeOffsetY = 0;
       if (screenShakeRef.current > 0.001) {
@@ -1219,7 +2136,7 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
       camera.position.set(camX, Math.max(0.3, camY), camZ);
       camera.lookAt(targetLookPos.x, targetLookPos.y, targetLookPos.z);
 
-      // 3. Attack Charging
+      // Attack Charging
       if (isChargingAttackRef.current) {
         const elapsed = (now - chargeStartTimeRef.current) / 1000;
         const progress = Math.min(1.0, elapsed / 1.6);
@@ -1246,48 +2163,162 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
       }
 
       const intersects = raycaster.intersectObjects(allColliders, false);
+      let targetFound = false;
+
       if (intersects.length > 0) {
         const hit = intersects[0];
-        const data = hit.object.userData;
-        const dist = hit.distance;
-        setTargetedPartUI({
-          npcName: data.outfitName || 'NPC Model',
-          partName: data.bodyPartKey || 'body',
-          inRange: dist <= 3.2,
-        });
-      } else {
+        const distFromPlayer = hit.point.distanceTo(playerPos);
+        if (distFromPlayer <= 5.0) {
+          const data = hit.object.userData;
+          setTargetedPartUI({
+            partKey: data.bodyPartKey,
+            displayName: data.displayName || 'Body',
+            inRange: true,
+          });
+          targetFound = true;
+        }
+      }
+
+      if (!targetFound) {
         setTargetedPartUI(null);
       }
 
-      // 4. NPC Physics & Arterial Fountains
+      // NPC AI, Hair Physics, Dying Animations, & Free Ragdoll Corpses
       for (const npc of npcsRef.current) {
         if (npc.isObliterated) continue;
 
-        npc.position.add(npc.velocity.clone().multiplyScalar(dt));
-        npc.velocity.multiplyScalar(Math.pow(0.88, dt * 60));
+        const npcGroundY = getMazeFloorHeightAt(npc.position.x, npc.position.z, currentMaze);
 
-        if (npc.position.y < 0) {
-          npc.position.y = 0;
-          npc.velocity.y = 0;
+        // Dynamic Hair Physics for NPCs
+        if (npc.vrm) {
+          const time = now * 0.003;
+          const npcSpeed = npc.velocity.length();
+          for (const track of npc.hairBones) {
+            const sway = Math.sin(time * 5 + track.phase) * (0.04 + npcSpeed * 0.03);
+            track.bone.rotation.x = track.initialRot.x + sway;
+            track.bone.rotation.z = track.initialRot.z + Math.cos(time * 4 + track.phase) * 0.03;
+          }
         }
 
-        if (!npc.isRagdoll) {
-          npc.staggerSpring += npc.staggerVelocity * dt;
-          npc.staggerVelocity -= npc.staggerSpring * 35.0 * dt;
-          npc.staggerVelocity *= Math.pow(0.82, dt * 60);
-
-          npc.rootGroup.rotation.z = Math.sin(npc.staggerSpring) * 0.22;
-          npc.rootGroup.rotation.x = Math.cos(npc.staggerSpring) * 0.15;
-
-          if (Math.abs(npc.staggerVelocity) > 28) {
+        // Dying sequence & corpse movement:
+        if (npc.isDead && npc.dyingTimer > 0) {
+          npc.dyingTimer -= dt;
+          if (npc.dyingTimer <= 0) {
             npc.isRagdoll = true;
+            setupNPCRagdoll(npc);
           }
-        } else {
-          npc.rootGroup.rotation.x = THREE.MathUtils.damp(npc.rootGroup.rotation.x, Math.PI / 2, 4, dt);
-          npc.rootGroup.position.y = THREE.MathUtils.damp(npc.rootGroup.position.y, 0.1, 8, dt);
+        }
+
+        // Push corpse if player walks into it!
+        const distToPlayer = npc.position.distanceTo(playerPos);
+        if (distToPlayer < 0.9 && npc.isDead) {
+          const pushVec = npc.position.clone().sub(playerPos).setY(0).normalize();
+          npc.velocity.add(pushVec.multiplyScalar(4.5 * dt));
+        }
+
+        // Living & not ragdoll: execute wandering (only if uninjured!)
+        if (!npc.isDead && !npc.isRagdoll) {
+          if (!npc.hasTakenDamage) {
+            npc.wanderTimer -= dt;
+            if (npc.wanderTimer <= 0) {
+              if (npc.wanderState === 'idle') {
+                npc.wanderState = 'walk';
+                npc.wanderTimer = 3.0 + Math.random() * 4.0;
+                const angle = Math.random() * Math.PI * 2;
+                npc.wanderDir.set(Math.cos(angle), 0, Math.sin(angle)).normalize();
+                playNPCAnimation(npc, 'mixamo_walk.fbx', true, false);
+              } else {
+                npc.wanderState = 'idle';
+                npc.wanderTimer = 2.5 + Math.random() * 5.0;
+                const randomStandby = STANDBY_ANIMATION_FILES[Math.floor(Math.random() * STANDBY_ANIMATION_FILES.length)];
+                playNPCAnimation(npc, randomStandby, true, false);
+              }
+            }
+
+            if (npc.wanderState === 'walk') {
+              const wanderSpeed = 1.6;
+              npc.position.add(npc.wanderDir.clone().multiplyScalar(wanderSpeed * dt));
+              resolveMazeCollision(npc.position, 0.38, currentMaze);
+
+              const targetYaw = Math.atan2(npc.wanderDir.x, npc.wanderDir.z);
+              let diff = targetYaw - npc.rotation.y;
+              while (diff < -Math.PI) diff += Math.PI * 2;
+              while (diff > Math.PI) diff -= Math.PI * 2;
+              npc.rotation.y += diff * Math.min(1, 8 * dt);
+              npc.rootGroup.rotation.y = npc.rotation.y;
+            }
+          }
+        }
+
+        // Apply velocity & maze wall collisions for living, dying and corpse entities!
+        npc.position.add(npc.velocity.clone().multiplyScalar(dt));
+        npc.velocity.multiplyScalar(Math.pow(0.85, dt * 60));
+        resolveMazeCollision(npc.position, 0.38, currentMaze);
+
+        // Strict rule: NPC position never below ground!
+        if (npc.position.y < npcGroundY) {
+          npc.position.y = npcGroundY;
         }
 
         npc.rootGroup.position.copy(npc.position);
+
+        // ALWAYS update animation mixer so dying animations advance and play!
+        if (npc.mixer) {
+          npc.mixer.update(dt);
+        }
+
+        // Full Free Verlet Ragdoll Physics Simulation for Corpses & Grabbed Entities
+        if (npc.isRagdoll && npc.ragdollParticles.length > 0) {
+          const gravity = new THREE.Vector3(0, -16.0, 0);
+
+          for (const p of npc.ragdollParticles) {
+            const vel = p.position.clone().sub(p.prevPosition).multiplyScalar(0.94);
+            p.prevPosition.copy(p.position);
+            p.position.add(vel).add(gravity.clone().multiplyScalar(dt * dt));
+
+            // Floor collision & ground friction (Strict rule: never sink below ground!)
+            const minParticleY = npcGroundY + p.radius;
+            if (p.position.y < minParticleY) {
+              p.position.y = minParticleY;
+              p.prevPosition.x = THREE.MathUtils.lerp(p.prevPosition.x, p.position.x, 0.35);
+              p.prevPosition.z = THREE.MathUtils.lerp(p.prevPosition.z, p.position.z, 0.35);
+            }
+            resolveMazeCollision(p.position, p.radius, currentMaze);
+          }
+
+          // Skeletal distance relaxation
+          for (let iter = 0; iter < 4; iter++) {
+            for (const stick of npc.ragdollSticks) {
+              const delta = stick.p2.position.clone().sub(stick.p1.position);
+              const curDist = delta.length();
+              if (curDist > 0.0001) {
+                const diff = (curDist - stick.restLength) / curDist;
+                stick.p1.position.add(delta.clone().multiplyScalar(0.5 * diff));
+                stick.p2.position.sub(delta.clone().multiplyScalar(0.5 * diff));
+              }
+            }
+          }
+
+          const hipsP = npc.ragdollParticles.find((p) => p.name === 'hips');
+          if (hipsP) {
+            npc.position.copy(hipsP.position);
+            npc.rootGroup.position.copy(npc.position);
+          }
+
+          for (const p of npc.ragdollParticles) {
+            if (p.boneNode) {
+              p.boneNode.position.copy(p.position).sub(npc.position);
+            }
+          }
+        }
+
+        // Enforce strict above-ground rule on every NPC
+        clampEntityAboveGround(npc.rootGroup, npc.vrm, npcGroundY);
+
+        if (npc.vrm) {
+          npc.vrm.scene.updateMatrixWorld(true);
+          npc.vrm.update(dt);
+        }
 
         // Arterial blood fountains on severed VRM stumps
         for (const k in npc.parts) {
@@ -1297,19 +2328,13 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
             if (part.stumpCap) {
               const capPos = new THREE.Vector3();
               part.stumpCap.getWorldPosition(capPos);
-              emitBloodSpray(
-                capPos,
-                new THREE.Vector3(0, 1, 0),
-                2,
-                2.5 + Math.random() * 2.0,
-                0.4
-              );
+              emitBloodSpray(capPos, new THREE.Vector3(0, 1, 0), 2, 2.5 + Math.random() * 2.0, 0.4);
             }
           }
         }
       }
 
-      // 5. Gibs Physics
+      // Gibs Physics
       for (let i = gibsRef.current.length - 1; i >= 0; i--) {
         const gib = gibsRef.current[i];
         gib.life += dt;
@@ -1323,8 +2348,9 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
         gib.velocity.y -= 14.0 * dt;
         gib.position.add(gib.velocity.clone().multiplyScalar(dt));
 
-        if (gib.position.y <= 0.08) {
-          gib.position.y = 0.08;
+        const gibGroundY = getMazeFloorHeightAt(gib.position.x, gib.position.z, currentMaze) + 0.08;
+        if (gib.position.y <= gibGroundY) {
+          gib.position.y = gibGroundY;
           gib.velocity.y = -gib.velocity.y * 0.35;
           gib.velocity.x *= 0.75;
           gib.velocity.z *= 0.75;
@@ -1334,6 +2360,7 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
           }
         }
 
+        resolveMazeCollision(gib.position, 0.12, currentMaze);
         gib.mesh.position.copy(gib.position);
         gib.mesh.rotation.x += gib.angularVelocity.x * dt;
         gib.mesh.rotation.y += gib.angularVelocity.y * dt;
@@ -1341,7 +2368,7 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
         gib.angularVelocity.multiplyScalar(0.96);
       }
 
-      // 6. Blood Particle Simulation
+      // Blood Particle Simulation
       const particles = bloodParticlesRef.current;
       const instanced = bloodParticleMeshRef.current;
       const dummyMat = new THREE.Matrix4();
@@ -1362,7 +2389,8 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
         p.velocity.y -= 16.0 * dt;
         p.position.add(p.velocity.clone().multiplyScalar(dt));
 
-        if (p.position.y <= 0.01) {
+        const pGroundY = getMazeFloorHeightAt(p.position.x, p.position.z, currentMaze) + 0.01;
+        if (p.position.y <= pGroundY) {
           createFloorBloodDecal(p.position, 0.15 + Math.random() * 0.12);
           particles.splice(i, 1);
           continue;
@@ -1398,14 +2426,67 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
         keysRef.current[e.code as keyof typeof keysRef.current] = true;
       }
 
+      // Spacebar: High Jump with Wall-Topping Capability
+      if (e.code === 'Space') {
+        e.preventDefault();
+        const currentGroundY = getMazeFloorHeightAt(playerPosRef.current.x, playerPosRef.current.z, mazeRef.current);
+        if (!isJumpingRef.current && Math.abs(playerPosRef.current.y - currentGroundY) <= 0.15) {
+          isJumpingRef.current = true;
+          playerVelYRef.current = 11.5;
+          const jumpAct = playerActionsRef.current.jump;
+          if (jumpAct) {
+            jumpAct.reset().play();
+            playerActionsRef.current.walk?.fadeOut(0.12);
+            playerActionsRef.current.idle?.fadeOut(0.12);
+          }
+        }
+      }
+
+      // "G" Key: Grab / Detach Keyframed Hand Reach & Physical Attachment
+      if (e.code === 'KeyG') {
+        if (grabbedNpcRef.current) {
+          grabbedNpcRef.current = null;
+          setIsGrabbingUI(false);
+          setGrabbedLabelUI('');
+          setHitMessage('DETACHED HAND');
+          setTimeout(() => setHitMessage(null), 1500);
+        } else {
+          const raycaster = new THREE.Raycaster();
+          if (cameraRef.current) {
+            raycaster.setFromCamera(new THREE.Vector2(0, 0), cameraRef.current);
+            const allColliders: THREE.Mesh[] = [];
+            for (const n of npcsRef.current) {
+              if (!n.isObliterated) allColliders.push(...n.proxyColliders);
+            }
+            const hits = raycaster.intersectObjects(allColliders, false);
+            if (hits.length > 0) {
+              const hit = hits[0];
+              const dist = hit.point.distanceTo(playerPosRef.current);
+              if (dist <= 5.0) {
+                const data = hit.object.userData;
+                const targetNPC = npcsRef.current.find((n) => n.id === data.npcId);
+                if (targetNPC) {
+                  targetNPC.isRagdoll = true;
+                  setupNPCRagdoll(targetNPC);
+                  grabbedNpcRef.current = {
+                    npc: targetNPC,
+                    partKey: data.bodyPartKey,
+                    boneNode: data.boneNode,
+                  };
+                  setIsGrabbingUI(true);
+                  setGrabbedLabelUI(`${targetNPC.name} (${data.displayName})`);
+                  audio.playGrabSound();
+                  setHitMessage(`ATTACHED TO ${targetNPC.name.toUpperCase()} [${data.displayName.toUpperCase()}]`);
+                  setTimeout(() => setHitMessage(null), 1800);
+                }
+              }
+            }
+          }
+        }
+      }
+
       if (e.code === 'KeyN') {
         setIsLibraryOpen((prev) => !prev);
-      } else if (e.code === 'KeyC') {
-        clearAllNPCs();
-      } else if (e.code === 'KeyR') {
-        for (const n of npcsRef.current) {
-          n.isRagdoll = !n.isRagdoll;
-        }
       } else if (e.code === 'KeyT') {
         setIsSlowMo((prev) => !prev);
       } else if (e.code === 'KeyH') {
@@ -1453,10 +2534,7 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
         else if (elapsed >= 0.8) punchLvl = 3;
         else if (elapsed >= 0.3) punchLvl = 2;
 
-        playerIsPunchingRef.current = true;
-        playerPunchTypeRef.current = punchLvl;
-        playerPunchProgressRef.current = 0;
-
+        const playerPos = playerPosRef.current;
         const raycaster = new THREE.Raycaster();
         raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
         const allColliders: THREE.Mesh[] = [];
@@ -1465,16 +2543,26 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
         }
 
         const hits = raycaster.intersectObjects(allColliders, false);
-        if (hits.length > 0 && hits[0].distance <= 3.2) {
-          const hit = hits[0];
-          const npcId = hit.object.userData.npcId;
-          const partKey = hit.object.userData.bodyPartKey as BodyPartKey;
-          const targetNPC = npcsRef.current.find((n) => n.id === npcId);
+        let targetNPC: NPCEntity | null = null;
+        let partKey: BodyPartKey = 'chest';
 
-          if (targetNPC) {
-            executePunchImpact(targetNPC, partKey, punchLvl);
+        if (hits.length > 0) {
+          const hit = hits[0];
+          const distFromPlayer = hit.point.distanceTo(playerPos);
+          if (distFromPlayer <= 5.0) {
+            const npcId = hit.object.userData.npcId;
+            targetNPC = npcsRef.current.find((n) => n.id === npcId) || null;
+            partKey = (hit.object.userData.bodyPartKey as BodyPartKey) || 'chest';
           }
+        }
+
+        if (targetNPC) {
+          executePunchImpact(targetNPC, partKey, punchLvl);
         } else {
+          if (punchLvl === 1) playPlayerAttackAnim('mixamo_headbutt.fbx');
+          else if (punchLvl === 2) playPlayerAttackAnim('mixamo_meleepunch.fbx');
+          else if (punchLvl === 3) playPlayerAttackAnim('mixamo_highkick.fbx');
+          else playPlayerAttackAnim('mixamo_torchmelee.fbx');
           audio.playLightHit();
         }
 
@@ -1533,7 +2621,7 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
       window.removeEventListener('resize', handleResize);
       renderer.dispose();
     };
-  }, [spawnThreeDummies, executePunchImpact, emitBloodSpray, createFloorBloodDecal]);
+  }, [spawnNPC, executePunchImpact, emitBloodSpray, createFloorBloodDecal, playPlayerAttackAnim, setupNPCRagdoll]);
 
   const handleCanvasClick = useCallback(() => {
     if (canvasRef.current && !isPointerLockedRef.current) {
@@ -1574,7 +2662,7 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
         isSecret: true,
       };
 
-      spawnNPC(customOutfit, { x: 0, z: -2.5 });
+      spawnNPC(customOutfit);
       setIsLibraryOpen(false);
     },
     [spawnNPC]
@@ -1583,7 +2671,7 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
   return (
     <div
       ref={containerRef}
-      className="relative w-screen h-screen overflow-hidden select-none bg-[var(--theme-bg,#0e1017)] text-[var(--theme-text,#ffffff)] font-sans"
+      className="relative w-screen h-screen overflow-hidden select-none bg-[#141824] text-white font-sans"
     >
       {/* 3D Viewport Canvas */}
       <canvas
@@ -1592,7 +2680,7 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
         className="w-full h-full block cursor-crosshair"
       />
 
-      {/* TOP HEADER: Clean Theme-Integrated Controls */}
+      {/* TOP HEADER */}
       <div className="absolute top-4 left-4 right-4 flex items-center justify-between pointer-events-auto z-20">
         <div className="flex items-center gap-3">
           <button
@@ -1604,13 +2692,15 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
             <span>Return to Chat</span>
           </button>
 
-          <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-neutral-900/80 backdrop-blur-md border border-neutral-700/60 text-neutral-300 text-xs font-semibold">
-            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-            <span>Arena Physics &amp; VRM Testing Matrix</span>
-          </div>
+          {isGrabbingUI && (
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-cyan-950/90 backdrop-blur-md border border-cyan-400 text-cyan-300 text-xs font-bold animate-pulse shadow-lg">
+              <Hand className="w-3.5 h-3.5" />
+              <span>HAND ATTACHED: {grabbedLabelUI.toUpperCase()} • PRESS [G] TO DETACH</span>
+            </div>
+          )}
         </div>
 
-        {/* Right Action Buttons */}
+        {/* Right Toolbar */}
         <div className="flex items-center gap-2">
           {/* Blood Theme Selector */}
           <button
@@ -1624,7 +2714,7 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
             title="Toggle Blood Liquid Theme"
           >
             <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-            <span className="hidden md:inline">Blood Style:</span>
+            <span className="hidden md:inline">Blood:</span>
             <span className="font-bold text-red-400 capitalize">{bloodStyle}</span>
           </button>
 
@@ -1665,24 +2755,25 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
         </div>
       </div>
 
-      {/* CENTER ACTION RETICLE & CHARGE RING */}
+      {/* CENTER ACTION RETICLE & CLEAN MINIMAL AIMING */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
         <div className="relative flex items-center justify-center">
+          {/* Circular Charge Ring */}
           {chargeProgressUI > 0 && (
-            <div className="absolute w-28 h-28 flex items-center justify-center">
+            <div className="absolute w-24 h-24 flex items-center justify-center">
               <svg className="w-full h-full -rotate-90" viewBox="0 0 100 100">
                 <circle
                   cx="50"
                   cy="50"
-                  r="44"
+                  r="42"
                   fill="none"
                   stroke="rgba(255, 255, 255, 0.15)"
-                  strokeWidth="5"
+                  strokeWidth="4"
                 />
                 <circle
                   cx="50"
                   cy="50"
-                  r="44"
+                  r="42"
                   fill="none"
                   stroke={
                     chargeLevelUI === 4
@@ -1691,25 +2782,37 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
                       ? '#f97316'
                       : chargeLevelUI === 2
                       ? '#eab308'
-                      : 'var(--theme-accent, #55d2f6)'
+                      : '#55d2f6'
                   }
                   strokeWidth="5"
-                  strokeDasharray="276"
-                  strokeDashoffset={276 - 276 * chargeProgressUI}
+                  strokeDasharray="264"
+                  strokeDashoffset={264 - 264 * chargeProgressUI}
                   strokeLinecap="round"
                 />
               </svg>
             </div>
           )}
 
-          {/* Central Crosshair */}
+          {/* Central Crosshair: Turns bright red when in range */}
           <div
-            className={`w-3.5 h-3.5 border-2 rounded-full transition-transform duration-75 ${
+            className={`w-3.5 h-3.5 border-2 rounded-full transition-all duration-100 ${
               targetedPartUI?.inRange
-                ? 'border-red-500 scale-125 bg-red-500/20'
+                ? 'border-red-500 scale-125 bg-red-500/30 shadow-[0_0_12px_rgba(239,68,68,0.8)]'
                 : 'border-white/50 scale-100 bg-transparent'
             }`}
           />
+
+          {/* Targeted body part name below crosshair */}
+          {targetedPartUI && (
+            <div className="absolute top-6 flex flex-col items-center">
+              <span className="text-[11px] font-mono font-bold tracking-wider uppercase px-2 py-0.5 rounded bg-black/75 backdrop-blur-md border border-red-500/40 text-red-300 drop-shadow">
+                {targetedPartUI.displayName}
+              </span>
+              <span className="text-[9px] font-mono text-cyan-300 mt-0.5">
+                {isGrabbingUI ? '[G] Detach Hand' : '[G] Attach Hand'}
+              </span>
+            </div>
+          )}
 
           {/* Hit Marker Red X */}
           {hitMarkerActive && (
@@ -1717,152 +2820,76 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
               <span className="text-red-500 font-extrabold text-2xl select-none">✕</span>
             </div>
           )}
-
-          {/* Charge Level Descriptor */}
-          {chargeProgressUI > 0 && (
-            <div className="absolute top-16 flex flex-col items-center">
-              <span
-                className={`text-[11px] font-bold tracking-wider uppercase px-2.5 py-0.5 rounded-lg backdrop-blur-md border ${
-                  chargeLevelUI === 4
-                    ? 'bg-neutral-900 border-red-500 text-red-400'
-                    : chargeLevelUI === 3
-                    ? 'bg-neutral-900 border-orange-500 text-orange-400'
-                    : chargeLevelUI === 2
-                    ? 'bg-neutral-900 border-yellow-500 text-yellow-400'
-                    : 'bg-neutral-900 border-[var(--theme-accent,#55d2f6)] text-[var(--theme-accent,#55d2f6)]'
-                }`}
-              >
-                {chargeLevelUI === 4
-                  ? 'LEVEL 4: OBLITERATE!'
-                  : chargeLevelUI === 3
-                  ? 'LEVEL 3: DISMEMBER CUT'
-                  : chargeLevelUI === 2
-                  ? 'LEVEL 2: HEAVY STRIKE'
-                  : 'LEVEL 1: JAB PUSH'}
-              </span>
-            </div>
-          )}
-
-          {/* Target HUD Tag */}
-          {targetedPartUI && (
-            <div className="absolute -top-12 flex flex-col items-center gap-0.5">
-              <div
-                className={`px-2.5 py-0.5 rounded-lg text-[11px] font-semibold backdrop-blur-md border uppercase tracking-wider ${
-                  targetedPartUI.inRange
-                    ? 'bg-neutral-900/90 border-red-500/60 text-red-200'
-                    : 'bg-neutral-900/80 border-neutral-700/60 text-neutral-300'
-                }`}
-              >
-                [{targetedPartUI.npcName} • {targetedPartUI.partName}]
-              </div>
-              {targetedPartUI.inRange && (
-                <span className="text-[10px] font-bold text-red-400 uppercase tracking-widest">
-                  HOLD LEFT CLICK TO CHARGE
-                </span>
-              )}
-            </div>
-          )}
         </div>
       </div>
 
-      {/* FLOATING COMBAT HIT NOTIFICATION */}
+      {/* FLOATING 3D DAMAGE POPUPS */}
+      {damagePopups.map((popup) => (
+        <div
+          key={popup.id}
+          style={{ left: `${popup.x}px`, top: `${popup.y}px` }}
+          className="absolute pointer-events-none -translate-x-1/2 -translate-y-1/2 z-30 font-black text-2xl tracking-wider drop-shadow-[0_2px_10px_rgba(0,0,0,0.95)] animate-bounce"
+        >
+          <span style={{ color: popup.color }}>{popup.text}</span>
+        </div>
+      ))}
+
+      {/* COMBAT HIT NOTIFICATION */}
       {hitMessage && (
-        <div className="absolute top-20 left-1/2 -translate-x-1/2 pointer-events-none z-30">
-          <div className="px-4 py-2 rounded-xl bg-neutral-900/95 border border-red-500 text-white font-bold text-xs tracking-wider shadow-2xl flex items-center gap-2">
-            <Skull className="w-4 h-4 text-red-400" />
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 pointer-events-none z-30">
+          <div className="px-4 py-1.5 rounded-xl bg-neutral-900/95 border border-red-500/70 text-white font-bold text-xs tracking-wider shadow-2xl flex items-center gap-2">
+            <Skull className="w-3.5 h-3.5 text-red-400" />
             <span>{hitMessage}</span>
           </div>
         </div>
       )}
 
-      {/* BOTTOM CONTROLS & SPAWNER RAIL */}
-      <div className="absolute bottom-6 left-6 right-6 flex flex-col sm:flex-row items-center justify-between gap-4 pointer-events-auto z-20">
-        {/* Left: Player Status & Actual VRM Model Tag */}
-        <div className="flex items-center gap-3 px-4 py-2.5 rounded-2xl bg-neutral-900/85 backdrop-blur-md border border-neutral-700/60 shadow-xl">
-          <div className="w-10 h-10 rounded-xl bg-neutral-800 border border-neutral-700 flex items-center justify-center shrink-0">
-            <span className="text-xs font-bold text-[var(--theme-accent,#55d2f6)]">VRM</span>
+      {/* BOTTOM HUD: Player Health Bar & Clean Spawn NPC Button */}
+      <div className="absolute bottom-6 left-6 right-6 flex items-center justify-between pointer-events-auto z-20">
+        {/* Left: Player Own Character Health Bar */}
+        <div className="flex items-center gap-3 px-4 py-2.5 rounded-2xl bg-neutral-900/90 backdrop-blur-md border border-neutral-700/60 shadow-xl">
+          <div className="w-9 h-9 rounded-xl bg-red-950/70 border border-red-500/40 flex items-center justify-center shrink-0">
+            <Heart className="w-4 h-4 text-red-400 fill-red-500/40" />
           </div>
           <div>
-            <div className="text-[11px] uppercase tracking-wider text-neutral-400 font-semibold">
-              Player Character
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-xs font-bold text-white tracking-wide">Hana</span>
+              <span className="text-[11px] font-mono font-bold text-emerald-400">{playerHealthUI} / 100 HP</span>
             </div>
-            <div className="text-xs font-bold text-white flex items-center gap-1.5">
-              <span>Hana ({PLAYER_OUTFIT.name})</span>
-              {isPlayerLoading && (
-                <Loader2 className="w-3 h-3 text-[var(--theme-accent,#55d2f6)] animate-spin" />
-              )}
+            <div className="w-36 sm:w-48 h-2 bg-neutral-800 rounded-full overflow-hidden border border-neutral-700 mt-1">
+              <div
+                className="h-full bg-gradient-to-r from-red-500 via-amber-400 to-emerald-400 transition-all duration-200"
+                style={{ width: `${Math.max(0, playerHealthUI)}%` }}
+              />
             </div>
           </div>
         </div>
 
-        {/* Center: Main Arena Spawner Controls */}
-        <div className="flex items-center gap-2 p-1.5 rounded-2xl bg-neutral-900/85 backdrop-blur-md border border-neutral-700/60 shadow-xl">
+        {/* Right: Single Spawn NPC Button */}
+        <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={() => setIsLibraryOpen(true)}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[var(--theme-accent,#55d2f6)] hover:opacity-90 active:scale-95 text-neutral-950 font-bold text-xs shadow-md transition-all cursor-pointer"
+            className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-[#55d2f6] hover:bg-[#38c4ed] active:scale-95 text-neutral-950 font-bold text-xs shadow-xl transition-all cursor-pointer"
           >
             <Plus className="w-4 h-4" />
-            <span>Spawn NPC Library [N]</span>
+            <span>Spawn NPC</span>
           </button>
-
-          <button
-            type="button"
-            onClick={spawnThreeDummies}
-            className="hidden md:flex items-center gap-1.5 px-3 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs font-semibold active:scale-95 transition-all cursor-pointer"
-          >
-            <Layers className="w-3.5 h-3.5 text-cyan-400" />
-            <span>Spawn 3 Dummies</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={spawnCircleArena}
-            className="hidden lg:flex items-center gap-1.5 px-3 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs font-semibold active:scale-95 transition-all cursor-pointer"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-            <span>Ring Coliseum (6)</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={clearAllNPCs}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-neutral-800 hover:bg-red-950/60 hover:text-red-400 text-neutral-300 text-xs font-semibold active:scale-95 transition-all cursor-pointer"
-            title="Clear all NPCs and blood splatters [C]"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-            <span>Clear [C]</span>
-          </button>
-        </div>
-
-        {/* Right: Active Entities Count */}
-        <div className="hidden sm:flex items-center gap-3 px-4 py-2.5 rounded-2xl bg-neutral-900/85 backdrop-blur-md border border-neutral-700/60 shadow-xl">
-          <div className="text-right">
-            <div className="text-[11px] uppercase tracking-wider text-neutral-400 font-semibold">
-              Arena Status
-            </div>
-            <div className="text-xs font-bold text-neutral-200">
-              {activeNpcCount} VRM Models Active • Click to Lock Aim
-            </div>
-          </div>
         </div>
       </div>
 
-      {/* ==================================================================== */}
-      {/* POP-UP MODAL: NPC LIBRARY COLLECTION OF ALL KNOWN MODELS */}
-      {/* ==================================================================== */}
+      {/* POP-UP MODAL: NPC LIBRARY COLLECTION */}
       {isLibraryOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
-          <div className="relative w-full max-w-4xl max-h-[85vh] bg-[var(--theme-surface,#181b26)] border border-[var(--theme-border,#2b3042)] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
-            {/* Modal Header */}
-            <div className="p-5 border-b border-[var(--theme-border,#2b3042)] flex items-center justify-between">
+          <div className="relative w-full max-w-4xl max-h-[85vh] bg-[#181b26] border border-[#2b3042] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+            <div className="p-5 border-b border-[#2b3042] flex items-center justify-between">
               <div>
-                <h2 className="text-base sm:text-lg font-bold text-[var(--theme-text,#ffffff)] flex items-center gap-2">
-                  <Skull className="w-5 h-5 text-[var(--theme-accent,#55d2f6)]" />
+                <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
+                  <Skull className="w-5 h-5 text-[#55d2f6]" />
                   <span>Spawn NPC Model Library Collection</span>
                 </h2>
                 <p className="text-xs text-neutral-400 mt-0.5">
-                  Spawns the authentic VRM avatar models directly into the 3D physics arena
+                  Spawns authentic VRM models directly into the procedural maze arena
                 </p>
               </div>
 
@@ -1875,8 +2902,7 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
               </button>
             </div>
 
-            {/* Modal Search & Filters */}
-            <div className="p-4 border-b border-[var(--theme-border,#2b3042)] bg-neutral-900/40 flex flex-col sm:flex-row items-center gap-3">
+            <div className="p-4 border-b border-[#2b3042] bg-neutral-900/40 flex flex-col sm:flex-row items-center gap-3">
               <div className="relative flex-1 w-full">
                 <Search className="absolute left-3 top-2.5 w-4 h-4 text-neutral-400" />
                 <input
@@ -1884,21 +2910,20 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
                   value={librarySearch}
                   onChange={(e) => setLibrarySearch(e.target.value)}
                   placeholder="Search model by name or filename..."
-                  className="w-full pl-9 pr-3 py-2 bg-[var(--theme-card,#12141d)] border border-[var(--theme-border,#2b3042)] rounded-xl text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-[var(--theme-accent,#55d2f6)] transition-all"
+                  className="w-full pl-9 pr-3 py-2 bg-[#12141d] border border-[#2b3042] rounded-xl text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-[#55d2f6] transition-all"
                 />
               </div>
 
-              {/* Category Filter Pills */}
               <div className="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto">
                 {['all', 'maid', 'dress', 'secret', 'premium'].map((cat) => (
                   <button
                     key={cat}
                     type="button"
                     onClick={() => setLibraryCategory(cat)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-semibold capitalize whitespace-nowrap transition-all cursor-pointer ${
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold capitalize whitespace-nowrap transition-all cursor-pointer ${
                       libraryCategory === cat
-                        ? 'bg-[var(--theme-accent,#55d2f6)] text-neutral-950 shadow-sm'
-                        : 'bg-[var(--theme-card,#12141d)] text-neutral-300 hover:bg-neutral-800 border border-[var(--theme-border,#2b3042)]'
+                        ? 'bg-[#55d2f6] text-neutral-950 shadow-md font-bold'
+                        : 'bg-neutral-800/80 text-neutral-300 hover:bg-neutral-700'
                     }`}
                   >
                     {cat}
@@ -1906,148 +2931,126 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
                 ))}
               </div>
 
-              {/* Custom VRM Upload */}
-              <label className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 border border-[var(--theme-border,#2b3042)] text-[var(--theme-accent,#55d2f6)] text-xs font-semibold whitespace-nowrap cursor-pointer transition-all active:scale-95">
-                <Upload className="w-3.5 h-3.5" />
-                <span>Upload .vrm</span>
+              <label className="flex items-center gap-2 px-3 py-2 rounded-xl bg-neutral-800 border border-neutral-700 text-xs font-semibold text-neutral-200 hover:bg-neutral-700 transition-all cursor-pointer shrink-0">
+                <span>Upload VRM</span>
                 <input
                   type="file"
                   accept=".vrm"
-                  onChange={handleCustomVrmUpload}
                   className="hidden"
+                  onChange={handleCustomVrmUpload}
                 />
               </label>
             </div>
 
-            {/* Modal Models Grid */}
-            <div className="p-5 flex-1 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+            <div className="p-5 overflow-y-auto flex-1 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3.5">
               {filteredOutfits.map((outfit) => (
                 <div
                   key={outfit.id}
-                  className="p-3 rounded-xl bg-[var(--theme-card,#12141d)] border border-[var(--theme-border,#2b3042)] hover:border-[var(--theme-accent,#55d2f6)] transition-all flex flex-col justify-between"
+                  onClick={() => {
+                    spawnNPC(outfit);
+                    setIsLibraryOpen(false);
+                  }}
+                  className="group relative p-3 rounded-xl bg-[#141722] border border-[#272d3f] hover:border-[#55d2f6] transition-all cursor-pointer flex flex-col items-center text-center shadow-lg hover:shadow-cyan-500/10 hover:-translate-y-0.5"
                 >
-                  <div>
-                    <div className="flex items-start justify-between gap-2">
-                      <h3 className="text-xs font-bold text-white">
-                        {outfit.name}
-                      </h3>
-                      {outfit.isSecret && (
-                        <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-purple-950/80 border border-purple-500/40 text-purple-300">
-                          Secret
-                        </span>
-                      )}
-                      {outfit.isPremium && !outfit.isSecret && (
-                        <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-amber-950/80 border border-amber-500/40 text-amber-300">
-                          Premium
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-[11px] font-mono text-neutral-400 truncate mt-1">
-                      {outfit.fileName}
-                    </div>
+                  <div className="w-16 h-16 rounded-xl bg-neutral-800/80 border border-neutral-700/60 flex items-center justify-center mb-2.5 overflow-hidden group-hover:border-[#55d2f6] transition-colors">
+                    {(outfit as any).previewImage ? (
+                      <img
+                        src={(outfit as any).previewImage}
+                        alt={outfit.name}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <Skull className="w-8 h-8 text-neutral-400 group-hover:text-[#55d2f6] transition-colors" />
+                    )}
                   </div>
+                  <span className="text-xs font-bold text-white line-clamp-1 group-hover:text-[#55d2f6] transition-colors">
+                    {outfit.name}
+                  </span>
+                  <span className="text-[10px] text-neutral-400 font-mono mt-0.5 line-clamp-1">
+                    {outfit.fileName}
+                  </span>
 
-                  <div className="mt-3 pt-3 border-t border-[var(--theme-border,#2b3042)] flex items-center justify-between">
-                    <span className="text-[10px] text-neutral-400">
-                      VRM 1.0 Avatar
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        spawnNPC(outfit, {
-                          x: (Math.random() - 0.5) * 1.5,
-                          z: -2.8,
-                        });
-                        setIsLibraryOpen(false);
-                      }}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--theme-accent,#55d2f6)] hover:opacity-90 text-neutral-950 font-bold text-xs shadow transition-all active:scale-95 cursor-pointer"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Spawn VRM</span>
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    className="mt-3 w-full py-1.5 rounded-lg bg-neutral-800 group-hover:bg-[#55d2f6] text-neutral-300 group-hover:text-neutral-950 font-bold text-[11px] transition-colors flex items-center justify-center gap-1.5"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Spawn</span>
+                  </button>
                 </div>
               ))}
-            </div>
-
-            {/* Modal Footer */}
-            <div className="p-4 border-t border-[var(--theme-border,#2b3042)] bg-neutral-900/60 flex items-center justify-between text-xs text-neutral-400">
-              <div>
-                Showing {filteredOutfits.length} of {ALL_WARDROBE_OUTFITS.length} official VRM models
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsLibraryOpen(false)}
-                className="px-4 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white font-semibold transition-all cursor-pointer"
-              >
-                Close Library
-              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* ==================================================================== */}
-      {/* POP-UP MODAL: CONTROLS & GORE MECHANICS GUIDE */}
-      {/* ==================================================================== */}
+      {/* CONTROLS & GUIDE MODAL [H] */}
       {isControlsModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
-          <div className="relative w-full max-w-lg bg-[var(--theme-surface,#181b26)] border border-[var(--theme-border,#2b3042)] rounded-2xl p-6 shadow-2xl flex flex-col gap-4">
-            <div className="flex items-center justify-between border-b border-[var(--theme-border,#2b3042)] pb-3">
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <Info className="w-5 h-5 text-[var(--theme-accent,#55d2f6)]" />
-                <span>Tor Combat &amp; VRM Physics Guide</span>
-              </h3>
+          <div className="relative w-full max-w-md bg-[#181b26] border border-[#2b3042] rounded-2xl shadow-2xl p-6">
+            <div className="flex items-center justify-between mb-4 pb-3 border-b border-[#2b3042]">
+              <div className="flex items-center gap-2">
+                <Info className="w-5 h-5 text-[#55d2f6]" />
+                <h3 className="text-base font-bold text-white">Tor Combat & Maze Controls</h3>
+              </div>
               <button
                 type="button"
                 onClick={() => setIsControlsModalOpen(false)}
-                className="p-1.5 rounded-xl text-neutral-400 hover:text-white transition-all cursor-pointer"
+                className="p-1 rounded-lg text-neutral-400 hover:text-white cursor-pointer"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
 
             <div className="space-y-3 text-xs text-neutral-300">
-              <div className="p-3 rounded-xl bg-[var(--theme-card,#12141d)] border border-[var(--theme-border,#2b3042)] space-y-1.5">
-                <div className="font-bold text-white text-sm">Action Controls</div>
-                <div>• <span className="text-[var(--theme-accent,#55d2f6)] font-bold">WASD</span>: Move avatar relative to camera view</div>
-                <div>• <span className="text-[var(--theme-accent,#55d2f6)] font-bold">Shift</span>: Sprint</div>
-                <div>• <span className="text-[var(--theme-accent,#55d2f6)] font-bold">Mouse Look</span>: Orbit camera freely around character (click canvas to lock mouse)</div>
-                <div>• <span className="text-[var(--theme-accent,#55d2f6)] font-bold">Right Click Drag</span>: Free camera orbit without locking</div>
-                <div>• <span className="text-[var(--theme-accent,#55d2f6)] font-bold">Mouse Wheel</span>: Zoom camera distance</div>
+              <div className="flex items-center justify-between py-1 border-b border-neutral-800">
+                <span className="font-semibold text-white">WASD + Shift</span>
+                <span className="font-mono text-neutral-400">Move / Sprint (Mixes with Leg Strides)</span>
               </div>
-
-              <div className="p-3 rounded-xl bg-[var(--theme-card,#12141d)] border border-red-500/20 space-y-1.5">
-                <div className="font-bold text-red-400 text-sm">Force Charging &amp; VRM Dismemberment</div>
-                <div>
-                  • <span className="text-cyan-300 font-bold">Level 1 (Tap &lt;0.3s)</span>: Light touching jab, nudges targeted VRM bone.
-                </div>
-                <div>
-                  • <span className="text-yellow-300 font-bold">Level 2 (Hold 0.3-0.8s)</span>: Heavy punch, creates blood stains, ragdoll stagger impulse.
-                </div>
-                <div>
-                  • <span className="text-orange-400 font-bold">Level 3 (Hold 0.8-1.5s)</span>: Dismembering strike! Rips off the targeted limb from the VRM model with bloody flesh caps and gushing arterial liquid fountain.
-                </div>
-                <div>
-                  • <span className="text-red-400 font-bold">Level 4 (Hold 1.5s+ Max)</span>: Doom Eternal Obliteration! Completely obliterates the VRM model into flying pulpy gibs and wide blood pools.
-                </div>
+              <div className="flex items-center justify-between py-1 border-b border-neutral-800">
+                <span className="font-semibold text-white">Left Click (Hold & Release)</span>
+                <span className="font-mono text-neutral-400">Charge Attack (Levels 1-4)</span>
               </div>
-
-              <div className="p-3 rounded-xl bg-[var(--theme-card,#12141d)] border border-[var(--theme-border,#2b3042)] space-y-1.5">
-                <div className="font-bold text-white text-sm">Hotkeys</div>
-                <div>• <span className="text-white font-mono">[N]</span>: Open NPC Spawner Library</div>
-                <div>• <span className="text-white font-mono">[C]</span>: Clear Arena &amp; Blood</div>
-                <div>• <span className="text-white font-mono">[T]</span>: Toggle Matrix Slow Motion</div>
-                <div>• <span className="text-white font-mono">[R]</span>: Toggle Ragdoll Simulation</div>
+              <div className="flex items-center justify-between py-1 border-b border-neutral-800">
+                <span className="font-semibold text-white">Attack Movement Lock</span>
+                <span className="font-mono text-neutral-400">Movement locked during attacks</span>
+              </div>
+              <div className="flex items-center justify-between py-1 border-b border-neutral-800">
+                <span className="font-semibold text-white">Spacebar</span>
+                <span className="font-mono text-neutral-400">High Jump (Land on wall tops!)</span>
+              </div>
+              <div className="flex items-center justify-between py-1 border-b border-neutral-800">
+                <span className="font-semibold text-white">G Key</span>
+                <span className="font-mono text-neutral-400">Attach / Detach Hand to Body Part</span>
+              </div>
+              <div className="flex items-center justify-between py-1 border-b border-neutral-800">
+                <span className="font-semibold text-white">Mouse Look</span>
+                <span className="font-mono text-neutral-400">Rotate Camera & Aim Reticle</span>
+              </div>
+              <div className="flex items-center justify-between py-1 border-b border-neutral-800">
+                <span className="font-semibold text-white">Level 3 Fatality</span>
+                <span className="font-mono text-neutral-400">High Kick, Instant Kill & Dying Anim</span>
+              </div>
+              <div className="flex items-center justify-between py-1 border-b border-neutral-800">
+                <span className="font-semibold text-white">Level 4 Obliterate</span>
+                <span className="font-mono text-neutral-400">Detaches ALL 12 body parts in 360°</span>
+              </div>
+              <div className="flex items-center justify-between py-1 border-b border-neutral-800">
+                <span className="font-semibold text-white">N Key</span>
+                <span className="font-mono text-neutral-400">Open Spawn NPC Library</span>
+              </div>
+              <div className="flex items-center justify-between py-1">
+                <span className="font-semibold text-white">T Key</span>
+                <span className="font-mono text-neutral-400">Toggle Slow Motion</span>
               </div>
             </div>
 
             <button
               type="button"
               onClick={() => setIsControlsModalOpen(false)}
-              className="w-full py-2.5 rounded-xl bg-[var(--theme-accent,#55d2f6)] hover:opacity-90 text-neutral-950 font-bold text-xs transition-all cursor-pointer"
+              className="mt-6 w-full py-2.5 rounded-xl bg-[#55d2f6] text-neutral-950 font-bold text-xs hover:bg-[#38c4ed] transition-colors cursor-pointer"
             >
-              Close Guide
+              Got it
             </button>
           </div>
         </div>
@@ -2055,3 +3058,5 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
     </div>
   );
 };
+
+export default TorGamePage;
