@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS conversations (
   id TEXT PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   title TEXT NOT NULL DEFAULT 'Direct Message',
-  model_id TEXT DEFAULT 'hana-fast',
+  model_id TEXT DEFAULT 'smollm2-135m',
   pinned BOOLEAN NOT NULL DEFAULT FALSE,
   created_at BIGINT NOT NULL,
   updated_at BIGINT NOT NULL
