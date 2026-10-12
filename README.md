@@ -12,6 +12,14 @@ based on a derivative of the [MuxAI](https://github.com/muxai/muxai-platform) pl
 - [[🌐 Live deployment]](https://aismash.web.app)
 - [[🛠️ Beta deployment]](https://ai-smash.vercel.app)
 
+## Support by upvoting, reviewing and following on:
+- [[🟠 ProductHunt]](https://www.producthunt.com/products/ai-smash)
+- [[🟩 PeerList]](https://peerlist.io/dmkto/project/hana)
+- [[🔵 Facebook]](https://facebook.com/hana.intelligence)
+- [[🟪 Instagram]](https://instagram.com/hana.intelligence)
+- [[⬛ X/Twitter]](https://x.com/hanainteligence)
+- [[🟦 LinkedIn]](https://www.linkedin.com/showcase/hanaintelligence)
+
 ---
 
 ## Tech Stack & Concepts
