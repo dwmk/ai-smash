@@ -3,12 +3,16 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { defineConfig } from 'vite';
+import viteCompression from 'vite-plugin-compression';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig(() => {
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(),viteCompression({
+      filter: /\.(wasm)$/i, // Compresses the large WASM file into a .gz file
+      threshold: 10240,
+    })],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

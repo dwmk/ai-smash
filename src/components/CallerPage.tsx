@@ -112,7 +112,7 @@ const STORAGE_KEYS = {
   PLATFORMS: 'hana_caller_platforms_v2',
 };
 
-export const CALLER_INTERVIEWER_VRM_MODEL = 'hana_v1.2_interviewer_vrm1.vrm';
+export const CALLER_INTERVIEWER_VRM_MODEL = 'hana_v1.5_interviewer_vrm1.vrm';
 
 export interface PlatformCredentials {
   whatsapp: {

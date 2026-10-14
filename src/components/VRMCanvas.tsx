@@ -42,7 +42,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
   onModelClick,
   onFallStart,
   isPainSoundPlaying = false,
-  modelFileName = 'hana_v1.3_vrm1.vrm',
+  modelFileName = 'hana_v1.5_vrm1.vrm',
   lastUserMessageAt = 0,
   emotion = 'neutral',
   interactive = true,

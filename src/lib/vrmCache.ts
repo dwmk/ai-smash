@@ -18,9 +18,9 @@ export interface VRMLoadProgress {
  */
 export async function fetchVRMWithCache(
   onProgress?: (progress: number, step?: string) => void,
-  fileName: string = 'hana_v1.3_vrm1.vrm'
+  fileName: string = 'hana_v1.5_vrm1.vrm'
 ): Promise<ArrayBuffer> {
-  const cleanFile = (fileName || 'hana_v1.3_vrm1.vrm').trim();
+  const cleanFile = (fileName || 'hana_v1.5_vrm1.vrm').trim();
 
   // If already in memory, instant return (cloned so callers cannot detach shared buffer)
   const existingMem = memoryCachedVRMBufferMap.get(cleanFile);
@@ -37,7 +37,7 @@ export async function fetchVRMWithCache(
 
   const fetchPromise = (async () => {
     const cacheName = VRM_CONFIG.cacheKey;
-    const isDefaultModel = cleanFile === 'hana_v1.3_vrm1.vrm';
+    const isDefaultModel = cleanFile === 'hana_v1.5_vrm1.vrm';
     const candidateUrls = isDefaultModel
       ? VRM_CONFIG.candidateModelUrls
       : [

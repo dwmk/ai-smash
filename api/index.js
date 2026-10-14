@@ -1184,12 +1184,12 @@ router.get('/health', (_req, res) => {
 router.get('/vrm', async (req, res) => {
   try {
     const requestedFile = typeof req.query.file === 'string' ? req.query.file.trim() : '';
-    const safeFile = /^[a-zA-Z0-9_.-]+\.vrm$/.test(requestedFile) ? requestedFile : 'hana_v1.3_vrm1.vrm';
+    const safeFile = /^[a-zA-Z0-9_.-]+\.vrm$/.test(requestedFile) ? requestedFile : 'hana_v1.5_vrm1.vrm';
 
     const targetUrls = [
       `${MODEL_SOURCE_DOMAIN}/${safeFile}`,
       `${MODEL_FALLBACK_DOMAIN}/${safeFile}`,
-      `${MODEL_SOURCE_DOMAIN}/hana_v1.3_vrm1.vrm`,
+      `${MODEL_SOURCE_DOMAIN}/hana_v1.5_vrm1.vrm`,
     ];
 
     let vrmResp = null;
@@ -3082,7 +3082,7 @@ const graphqlSchema = buildSchema(`
 `);
 
 const WARDROBE_OUTFITS_LIST = [
-  { id: 'mint-maid-apron', name: 'Mint Maid Apron', fileName: 'hana_v1.3_vrm1.vrm', modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.3_vrm1.vrm`, fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.3_vrm1.vrm`, isPremium: false, isDefault: true },
+  { id: 'mint-maid-apron', name: 'Mint Maid Apron', fileName: 'hana_v1.5_vrm1.vrm', modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.5_vrm1.vrm`, fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.5_vrm1.vrm`, isPremium: false, isDefault: true },
   { id: 'candy-maid-apron', name: 'Candy Maid Apron', fileName: 'hana_v1.3_outfit2.vrm', modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.3_outfit2.vrm`, fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.3_outfit2.vrm`, isPremium: false },
   { id: 'imperial-noblewoman', name: 'Imperial Noblewoman', fileName: 'hana_v1.3_outfit3.vrm', modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.3_outfit3.vrm`, fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.3_outfit3.vrm`, isPremium: true },
   { id: 'lavender-grace-dress', name: 'Lavender Grace Dress', fileName: 'hana_v1.3_outfit4.vrm', modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.3_outfit4.vrm`, fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.3_outfit4.vrm`, isPremium: true },
@@ -3097,7 +3097,7 @@ const WARDROBE_OUTFITS_LIST = [
 const graphqlRoot = {
   avatar: ({ outfitId }) => {
     const outfit = outfitId ? WARDROBE_OUTFITS_LIST.find((o) => o.id === outfitId) : WARDROBE_OUTFITS_LIST[0];
-    const fileName = outfit?.fileName || 'hana_v1.3_vrm1.vrm';
+    const fileName = outfit?.fileName || 'hana_v1.5_vrm1.vrm';
     return {
       url: `/api/vrm?file=${encodeURIComponent(fileName)}`,
       defaultOutfitId: 'mint-maid-apron',
@@ -3169,7 +3169,7 @@ const graphqlRoot = {
     handle: '@hana_muxai',
     bio: 'a flower so bright... her petals sparkled with light 🩵',
     avatarUrl: DEFAULT_USER_AVATAR_URL,
-    vrmModelUrl: 'https://ai.mux8.com/hana_v1.3_vrm1.vrm',
+    vrmModelUrl: 'https://ai.mux8.com/hana_v1.5_vrm1.vrm',
     websiteUrl: 'https://muxai.vercel.app',
     systemPromptAbridged: DEFAULT_SYSTEM_PROMPT.slice(0, 300),
   }),

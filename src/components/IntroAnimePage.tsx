@@ -52,7 +52,7 @@ const SHOWCASE_OUTFITS: ShowcaseOutfit[] = [
     theme: 'ANGELIC SIGNATURE',
     badge: 'CLASSIC // ICONIC',
     color: '#0284c7',
-    fileName: 'hana_v1.3_vrm1.vrm',
+    fileName: 'hana_v1.5_vrm1.vrm',
   },
   {
     id: 'candy-maid',
@@ -92,7 +92,7 @@ const SHOWCASE_OUTFITS: ShowcaseOutfit[] = [
     theme: 'EXECUTIVE ACADEMIC',
     badge: 'CAREER // FORMAL',
     color: '#0891b2',
-    fileName: 'hana_v1.2_interviewer_vrm1.vrm',
+    fileName: 'hana_v1.5_interviewer_vrm1.vrm',
   },
 ];
 
@@ -1293,7 +1293,7 @@ export const IntroAnimePage: React.FC<IntroAnimePageProps> = ({
                 className="text-4xl sm:text-6xl md:text-7xl font-black tracking-tighter text-neutral-900 uppercase drop-shadow-[4px_4px_0px_#ffffff]"
                 style={{ WebkitTextStroke: '1px #0f172a' }}
               >
-                WAKE UP, REBEL.
+                WAKE UP, USER.
               </h1>
               <div
                 className="px-6 py-2.5 bg-white/95 backdrop-blur-md border-2 border-sky-500 text-neutral-800 font-mono text-sm sm:text-base max-w-xl shadow-xl transform skew-x-6"
@@ -1387,7 +1387,7 @@ export const IntroAnimePage: React.FC<IntroAnimePageProps> = ({
                   CAREER & ACADEMIC PRODUCTIVITY
                 </div>
                 <h2 className="text-3xl sm:text-5xl font-black text-neutral-900 uppercase drop-shadow-[3px_3px_0px_#ffffff]">
-                  INTERVIEWER & WRITING
+                  VIRTUAL INTERACTIONS
                 </h2>
                 <p className="text-neutral-800 text-sm font-medium leading-relaxed bg-white/95 p-3.5 border-l-4 border-sky-600 shadow-lg">
                   Conduct realistic mock technical video screenings with visual credential verification, or convert AI text to human grade prose.
@@ -1443,7 +1443,7 @@ export const IntroAnimePage: React.FC<IntroAnimePageProps> = ({
                   VOICE & WORKFLOW INTEGRATION
                 </div>
                 <h2 className="text-3xl sm:text-5xl font-black text-neutral-900 uppercase drop-shadow-[3px_3px_0px_#ffffff]">
-                  OMNICHANNEL MATRIX
+                  MULTI CHANNELS
                 </h2>
                 <p className="text-neutral-800 text-sm font-medium leading-relaxed bg-white/95 p-3.5 border-l-4 border-amber-500 shadow-lg">
                   Stream real-time voice with synchronized <span className="text-amber-600 font-bold">viseme mouth shapes</span>. Connect Hana directly into Discord voice channels, Twitch live streams, and automated n8n workflows.
@@ -1480,14 +1480,14 @@ export const IntroAnimePage: React.FC<IntroAnimePageProps> = ({
           {currentSceneIndex === 5 && (
             <div className="flex flex-col items-center text-center space-y-5 animate-in fade-in zoom-in-90 duration-300 pointer-events-none">
               <div className="px-5 py-1.5 bg-[#e11d48] text-white font-black text-sm tracking-widest uppercase transform -skew-x-12 border-2 border-white shadow-xl">
-                SHOWTIME // ALL-OUT FINALE!
+                MuxAI
               </div>
 
               <h1
                 className="text-5xl sm:text-7xl md:text-8xl font-black uppercase text-neutral-900 tracking-tighter drop-shadow-[5px_5px_0px_#ffffff]"
                 style={{ WebkitTextStroke: '2px #0f172a' }}
               >
-                HANA // MUXAI
+                HANA
               </h1>
 
               <p className="text-neutral-800 font-mono text-xs sm:text-sm max-w-lg bg-white/95 p-3.5 border-t-2 border-b-2 border-neutral-900 shadow-xl">

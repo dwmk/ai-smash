@@ -166,13 +166,13 @@ const OUTFIT_PAIN_TAKER: WardrobeOutfit =
   };
 
 const OUTFIT_BASE_HANA: WardrobeOutfit =
-  ALL_WARDROBE_OUTFITS.find((o) => o.fileName === 'hana_v1.0_base_vrm1.vrm') ||
+  ALL_WARDROBE_OUTFITS.find((o) => o.fileName === 'hana_v1.5_base_vrm1.vrm') ||
   getOutfitById('base') || {
     id: 'base',
     name: 'All Natural Base',
-    fileName: 'hana_v1.0_base_vrm1.vrm',
-    modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.0_base_vrm1.vrm`,
-    fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.0_base_vrm1.vrm`,
+    fileName: 'hana_v1.5_base_vrm1.vrm',
+    modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.5_base_vrm1.vrm`,
+    fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.5_base_vrm1.vrm`,
     isPremium: false,
     isSecret: true,
   };

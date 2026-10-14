@@ -111,7 +111,7 @@ export const DOCS_ARTICLES: DocArticle[] = [
       steps: [
         {
           title: '1. Load Hana 3D VRM 1.0 Model via Asset Proxy',
-          desc: 'To prevent cross-origin redirect errors, request the avatar model from /api/vrm. You can specify a wardrobe outfit using the query parameter ?file=hana_v1.3_vrm1.vrm. Initialize Three.js, register VRMLoaderPlugin with GLTFLoader, and add the resulting VRM scene to your WebGL viewport.',
+          desc: 'To prevent cross-origin redirect errors, request the avatar model from /api/vrm. You can specify a wardrobe outfit using the query parameter ?file=hana_v1.5_vrm1.vrm. Initialize Three.js, register VRMLoaderPlugin with GLTFLoader, and add the resulting VRM scene to your WebGL viewport.',
           lang: 'typescript',
           code: `import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';

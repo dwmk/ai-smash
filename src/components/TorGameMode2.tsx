@@ -730,10 +730,10 @@ export const TorGameMode2: React.FC<TorGameMode2Props> = ({
       }, 3400);
     } else if (nextLives === 1) {
       // 2nd strike: Last chance!
-      // "For the last chance, the player's model is changed to hana_v1.0_base_vrm1.vrm"
+      // "For the last chance, the player's model is changed to hana_v1.5_base_vrm1.vrm"
       setTimeout(async () => {
         setLoadingText('Stripping to Base Natural Form...');
-        await loadPlayerVRM('hana_v1.0_base_vrm1.vrm');
+        await loadPlayerVRM('hana_v1.5_base_vrm1.vrm');
         await playPlayerAnim('mixamo_idle_injured.fbx', true);
         await playNpcAnim('mixamo_idle.fbx', true);
         speakDialogue("Down to your bare natural form, are you? One more mistake and you are finished!", 'Hana (Dominant)');

@@ -3339,7 +3339,7 @@ const graphqlSchema = buildSchema(`
 const graphqlRoot = {
   avatar: ({ outfitId }: { outfitId?: string }) => {
     const outfit = outfitId ? ALL_WARDROBE_OUTFITS.find((o) => o.id === outfitId) : ALL_WARDROBE_OUTFITS[0];
-    const fileName = outfit?.fileName || 'hana_v1.3_vrm1.vrm';
+    const fileName = outfit?.fileName || 'hana_v1.5_vrm1.vrm';
     return {
       url: `/api/vrm?file=${encodeURIComponent(fileName)}`,
       defaultOutfitId: DEFAULT_OUTFIT_ID,
