@@ -100,6 +100,7 @@ import { MMDStudioPage } from './components/MMDStudioPage';
 import { InterviewPage } from './components/InterviewPage';
 import { CallerPage } from './components/CallerPage';
 import { TorGamePage } from './components/TorGamePage';
+import { IntroAnimePage } from './components/IntroAnimePage';
 import { PremiumModal } from './components/PremiumModal';
 import { IntegrationLibraryItem } from './constants';
 import { dispatchChatToWebhooks } from './lib/integrations';
@@ -151,6 +152,9 @@ export default function App() {
       if (path.startsWith('/tor')) {
         return '/tor';
       }
+      if (path.startsWith('/intro')) {
+        return '/intro';
+      }
       return path.startsWith('/chat') ? '/chat' : '/';
     }
     return '/';
@@ -184,6 +188,10 @@ export default function App() {
       }
       if (path.startsWith('/tor')) {
         setCurrentRoute('/tor');
+        return;
+      }
+      if (path.startsWith('/intro')) {
+        setCurrentRoute('/intro');
         return;
       }
       if (path.startsWith('/mmd')) {
@@ -240,6 +248,8 @@ export default function App() {
         normalized = '/act';
       } else if (path.startsWith('/tor')) {
         normalized = '/tor';
+      } else if (path.startsWith('/intro')) {
+        normalized = '/intro';
       } else if (path.startsWith('/mmd')) {
         normalized = '/mmd';
       } else if (path.startsWith('/voice')) {
@@ -2183,6 +2193,21 @@ export default function App() {
           onBackToChat={() => navigateTo('/chat')}
           onNavigateHome={() => navigateTo('/')}
           onNavigateToAct={() => navigateTo('/act')}
+        />
+      </>
+    );
+  }
+
+  // Render Secret Anime Intro Showcase at '/intro'
+  if (currentRoute.startsWith('/intro')) {
+    return (
+      <>
+        {shockwaveOverlay}
+        <IntroAnimePage
+          onBackToChat={() => navigateTo('/chat')}
+          onNavigateHome={() => navigateTo('/')}
+          onNavigateToInterview={() => navigateTo('/interview')}
+          onNavigateToHumanizer={() => navigateTo('/humanizer')}
         />
       </>
     );

@@ -28,6 +28,7 @@ import {
 } from '../constants';
 import { waitForPersonaVoice } from '../lib/audio';
 import { WardrobeOutfit } from '../types';
+import { TorGameMode2 } from './TorGameMode2';
 
 // ============================================================================
 // Types & Definitions
@@ -1061,6 +1062,23 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
   const [loadingProgress, setLoadingProgress] = useState<number>(18);
   const [loadingStatusText, setLoadingStatusText] = useState<string>('Generating procedural 3D maze arena...');
 
+  // Mode Selection: "Giving pain" (Default / Dominant) or "Getting pain" (Submissive / Punishment mode)
+  const [userChoice, setUserChoice] = useState<'giving-pain' | 'getting-pain' | null>(null);
+  const userChoiceRef = useRef<'giving-pain' | 'getting-pain' | null>(null);
+  const isAssetReadyRef = useRef<boolean>(false);
+
+  const handleSelectMode = useCallback((mode: 'giving-pain' | 'getting-pain') => {
+    setUserChoice(mode);
+    userChoiceRef.current = mode;
+    if (mode === 'giving-pain') {
+      if (isAssetReadyRef.current) {
+        setTimeout(() => {
+          setIsLoadingScreen(false);
+        }, 120);
+      }
+    }
+  }, []);
+
   // ----------------------------------------------------
   // Full Verlet Ragdoll System Setup
   // ----------------------------------------------------
@@ -2011,10 +2029,13 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
             setLoadingStatusText('Spawning combat NPCs...');
             setTimeout(() => {
               setLoadingProgress(100);
-              setLoadingStatusText('Arena Ready!');
-              setTimeout(() => {
-                setIsLoadingScreen(false);
-              }, 280);
+              setLoadingStatusText('Arena Ready! Please choose your role above.');
+              isAssetReadyRef.current = true;
+              if (userChoiceRef.current === 'giving-pain') {
+                setTimeout(() => {
+                  setIsLoadingScreen(false);
+                }, 280);
+              }
             }, 450);
           }
         },
@@ -2907,6 +2928,18 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
     [spawnNPC]
   );
 
+  // If user selected the 2nd mode ("Getting pain"), render TorGameMode2
+  if (userChoice === 'getting-pain') {
+    return (
+      <TorGameMode2
+        onBackToChat={onBackToChat}
+        onSwitchMode={() => {
+          handleSelectMode('giving-pain');
+        }}
+      />
+    );
+  }
+
   return (
     <div
       ref={containerRef}
@@ -2919,25 +2952,74 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
         className="w-full h-full block cursor-crosshair"
       />
 
-      {/* BACKGROUND INITIALIZING LOADING SCREEN OVERLAY */}
+      {/* BACKGROUND INITIALIZING LOADING SCREEN OVERLAY WITH BLURRED BACKGROUND */}
       {isLoadingScreen && (
-        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-[#0d101a] text-white select-none transition-opacity duration-500">
-          <div className="relative flex flex-col items-center max-w-sm w-full mx-4 p-8 rounded-3xl bg-[#141824]/95 border border-[#55d2f6]/30 shadow-[0_0_50px_rgba(85,210,246,0.18)] backdrop-blur-2xl">
+        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-[#070910]/85 backdrop-blur-3xl text-white select-none transition-opacity duration-500 p-4">
+          <div className="relative flex flex-col items-center max-w-lg w-full p-6 sm:p-8 rounded-3xl bg-[#121624]/95 border border-[#55d2f6]/30 shadow-[0_0_60px_rgba(85,210,246,0.18)] backdrop-blur-2xl">
             {/* Cyber Pulsing Icon */}
-            <div className="relative w-16 h-16 mb-5 flex items-center justify-center rounded-2xl bg-cyan-500/10 border border-cyan-500/40 text-cyan-400">
-              <Sparkles className="w-8 h-8 animate-pulse text-[#55d2f6]" />
+            <div className="relative w-14 h-14 mb-3 flex items-center justify-center rounded-2xl bg-cyan-500/10 border border-cyan-500/40 text-cyan-400">
+              <Sparkles className="w-7 h-7 animate-pulse text-[#55d2f6]" />
               <div className="absolute inset-0 rounded-2xl border border-cyan-400/40 animate-ping opacity-25" />
             </div>
 
-            <h2 className="text-xl font-bold tracking-tight text-white mb-1">
+            <h2 className="text-xl font-bold tracking-tight text-white mb-0.5">
               TOR COMBAT ARENA
             </h2>
-            <p className="text-xs text-neutral-400 text-center mb-6">
+            <p className="text-xs text-neutral-400 text-center mb-4">
               Procedural 3D VRM Ragdoll Arena &amp; Combat Simulator
             </p>
 
+            {/* SELECTION CARD: "What do you like more?" + 2 Buttons */}
+            <div className="w-full p-4 sm:p-5 rounded-2xl bg-black/50 border border-neutral-700/60 flex flex-col items-center mb-4 shadow-inner">
+              <span className="text-[11px] font-bold text-[#55d2f6] uppercase tracking-wider mb-1">Select Playstyle</span>
+              <h3 className="text-base sm:text-lg font-black text-white text-center mb-3">
+                What do you like more?
+              </h3>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full">
+                {/* 1st Option: Giving pain */}
+                <button
+                  type="button"
+                  onClick={() => handleSelectMode('giving-pain')}
+                  className={`group relative flex flex-col items-center p-4 rounded-2xl border-2 transition-all cursor-pointer shadow-lg active:scale-95 ${
+                    userChoice === 'giving-pain'
+                      ? 'bg-red-950/90 border-red-500 text-white shadow-red-500/20 shadow-xl'
+                      : 'bg-neutral-900/90 border-red-500/40 hover:border-red-400 hover:bg-red-950/40 text-neutral-200'
+                  }`}
+                >
+                  <div className="w-12 h-12 rounded-xl bg-red-500/20 border border-red-500/40 flex items-center justify-center mb-2 group-hover:scale-105 transition-transform">
+                    <Skull className="w-6 h-6 text-red-400" />
+                  </div>
+                  <span className="text-sm font-black text-red-300">Giving pain</span>
+                  <span className="text-[10px] text-neutral-400 text-center mt-1 leading-snug">
+                    Dominant Top (hana_v1.2_darkpain_vrm1.vrm) — Combat Arena
+                  </span>
+                  {userChoice === 'giving-pain' && (
+                    <span className="mt-2 text-[10px] font-bold text-emerald-400">
+                      Starting Dominant Mode...
+                    </span>
+                  )}
+                </button>
+
+                {/* 2nd Option: Getting pain */}
+                <button
+                  type="button"
+                  onClick={() => handleSelectMode('getting-pain')}
+                  className="group relative flex flex-col items-center p-4 rounded-2xl border-2 bg-neutral-900/90 border-purple-500/40 hover:border-purple-400 hover:bg-purple-950/40 text-neutral-200 transition-all cursor-pointer shadow-lg active:scale-95 hover:shadow-purple-500/20 hover:shadow-xl"
+                >
+                  <div className="w-12 h-12 rounded-xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center mb-2 group-hover:scale-105 transition-transform">
+                    <Heart className="w-6 h-6 text-purple-400 fill-purple-400/30" />
+                  </div>
+                  <span className="text-sm font-black text-purple-300">Getting pain</span>
+                  <span className="text-[10px] text-neutral-400 text-center mt-1 leading-snug">
+                    Submissive Bottom (hana_v1.2_darkslave_vrm1.vrm) — Punishment Trial
+                  </span>
+                </button>
+              </div>
+            </div>
+
             {/* Progress bar */}
-            <div className="w-full h-2 rounded-full bg-neutral-800 overflow-hidden mb-3 border border-neutral-700/60">
+            <div className="w-full h-2 rounded-full bg-neutral-800 overflow-hidden mb-2 border border-neutral-700/60">
               <div
                 className="h-full bg-gradient-to-r from-[#55d2f6] via-sky-400 to-emerald-400 transition-all duration-300 ease-out"
                 style={{ width: `${Math.max(5, Math.min(100, loadingProgress))}%` }}
@@ -2962,6 +3044,16 @@ export const TorGamePage: React.FC<TorGamePageProps> = ({
           >
             <ArrowLeft className="w-3.5 h-3.5" />
             <span>Return to Chat</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleSelectMode('getting-pain')}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-950/80 backdrop-blur-md border border-purple-500/40 text-purple-200 hover:bg-purple-900/80 transition-all text-xs font-semibold active:scale-95 cursor-pointer shadow-lg"
+            title="Switch to Getting Pain (Punishment Trial)"
+          >
+            <Heart className="w-3.5 h-3.5 text-purple-400 fill-purple-400/30" />
+            <span className="hidden sm:inline">Getting Pain Trial</span>
           </button>
 
           {isGrabbingUI && (
