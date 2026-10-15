@@ -24,6 +24,7 @@ import {
   Trash2,
   Upload,
   ChevronLeft,
+  ChevronRight,
   ChevronDown,
   Film,
   Box,
@@ -35,8 +36,11 @@ import {
   Camera,
   Move,
   RotateCcw,
-  Skull,
-  ArrowLeft,
+  Eye,
+  EyeOff,
+  Users,
+  UserPlus,
+  Volume2,
 } from 'lucide-react';
 
 export interface AnimationItem {
@@ -76,13 +80,58 @@ function localizeAnimationClip(clip: THREE.AnimationClip): THREE.AnimationClip {
       const baseX = values[0];
       const baseZ = values[2];
       for (let i = 0; i < values.length; i += 3) {
-        // Keep subtle local sway around 0 in X/Z while stripping world-space root displacement
         values[i] = (values[i] - baseX) * 0.25;
         values[i + 2] = (values[i + 2] - baseZ) * 0.25;
       }
     }
   }
   return clip;
+}
+
+/**
+ * High-level Actor Model State.
+ * Each model has independent identity, position/rotation, active animation/emotion,
+ * visibility, and its own independent Script (Timeline Cues).
+ */
+export interface ActModelItem {
+  id: string;
+  name: string;
+  fileName?: string;
+  outfitId?: string;
+  isCustom?: boolean;
+  visible: boolean;
+  activeAnimKey: string;
+  activeEmotionKey: string;
+  cues: TimelineCue[];
+  isPlaying: boolean;
+  activePlayingIndex: number | null;
+  transform: {
+    x: number;
+    y: number;
+    z: number;
+    yawDeg: number;
+  };
+}
+
+/**
+ * Low-level Three.js & Animation Mixers for an individual active VRM on the stage.
+ */
+interface RuntimeModelInstance {
+  id: string;
+  rootGroup: THREE.Group;
+  selectionRing: THREE.Group;
+  vrm: VRM;
+  mixer: THREE.AnimationMixer;
+  actionsMap: Map<string, THREE.AnimationAction>;
+  loadingAnimPromises: Map<string, Promise<THREE.AnimationAction | null>>;
+  currentAction: THREE.AnimationAction | null;
+  currentEmotionWeights: Record<string, number>;
+  proxyColliders: THREE.Mesh[];
+  blinkTimer: number;
+  nextBlinkTime: number;
+  isBlinking: boolean;
+  cancelPlayback: boolean;
+  timeoutId: NodeJS.Timeout | null;
 }
 
 interface ActDirectorPageProps {
@@ -103,54 +152,50 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
-  const modelRootGroupRef = useRef<THREE.Group | null>(null);
-  const modelSelectionRingRef = useRef<THREE.Group | null>(null);
-  const vrmRef = useRef<VRM | null>(null);
-  const mixerRef = useRef<THREE.AnimationMixer | null>(null);
-  const actionsMapRef = useRef<Map<string, THREE.AnimationAction>>(new Map());
-  const loadingAnimPromisesRef = useRef<Map<string, Promise<THREE.AnimationAction | null>>>(new Map());
-  const currentActionRef = useRef<THREE.AnimationAction | null>(null);
+
+  // Runtime Models Map (id -> RuntimeModelInstance)
+  const runtimeModelsRef = useRef<Map<string, RuntimeModelInstance>>(new Map());
+
+  // Multi-Model React State
+  const [models, setModels] = useState<ActModelItem[]>([
+    {
+      id: 'model-1',
+      name: 'Hana (Maid)',
+      outfitId: 'mint-maid-apron',
+      visible: true,
+      activeAnimKey: 'idle',
+      activeEmotionKey: 'neutral',
+      cues: ACT_INITIAL_CUES.map((c) => ({ ...c })),
+      isPlaying: false,
+      activePlayingIndex: null,
+      transform: { x: 0, y: 0, z: 0, yawDeg: 0 },
+    },
+  ]);
+  const [activeModelId, setActiveModelId] = useState<string>('model-1');
+  const activeModelIdRef = useRef<string>('model-1');
+  useEffect(() => {
+    activeModelIdRef.current = activeModelId;
+  }, [activeModelId]);
+
+  const activeModel = useMemo(() => {
+    return models.find((m) => m.id === activeModelId) || models[0] || null;
+  }, [models, activeModelId]);
 
   // Viewport Interaction Toolbar: Camera Movement vs. Model Movement (Local Space)
   const [interactionMode, setInteractionMode] = useState<'camera' | 'model'>('camera');
   const interactionModeRef = useRef<'camera' | 'model'>('camera');
   const [modelMoveSubMode, setModelMoveSubMode] = useState<'xy' | 'xz' | 'rotate'>('xy');
   const modelMoveSubModeRef = useRef<'xy' | 'xz' | 'rotate'>('xy');
-  const [modelTransformDisplay, setModelTransformDisplay] = useState<{
-    x: number;
-    y: number;
-    z: number;
-    yawDeg: number;
-  }>({ x: 0, y: 0, z: 0, yawDeg: 0 });
   const isDraggingModelRef = useRef<boolean>(false);
 
-  useEffect(() => {
-    interactionModeRef.current = interactionMode;
-    if (controlsRef.current) {
-      controlsRef.current.enabled = interactionMode === 'camera' && !isForceTestActiveRef.current;
-    }
-    if (modelSelectionRingRef.current) {
-      modelSelectionRingRef.current.visible = interactionMode === 'model';
-    }
-  }, [interactionMode]);
+  // Side Toolbars expansion states
+  const [isRailExpanded, setIsRailExpanded] = useState<boolean>(true); // Left toolbar
+  const [isRightToolbarExpanded, setIsRightToolbarExpanded] = useState<boolean>(true); // Right Multi-Model toolbar
+  const [isScriptEditorOpen, setIsScriptEditorOpen] = useState<boolean>(true);
+  const [showSubtitles, setShowSubtitles] = useState<boolean>(true);
+  const [autoplayOnClose, setAutoplayOnClose] = useState<boolean>(false);
 
-  useEffect(() => {
-    modelMoveSubModeRef.current = modelMoveSubMode;
-  }, [modelMoveSubMode]);
-
-  const handleResetModelTransform = useCallback(() => {
-    if (modelRootGroupRef.current) {
-      modelRootGroupRef.current.position.set(0, 0, 0);
-      modelRootGroupRef.current.rotation.set(0, 0, 0);
-      modelRootGroupRef.current.updateMatrixWorld(true);
-    }
-    setModelTransformDisplay({ x: 0, y: 0, z: 0, yawDeg: 0 });
-  }, []);
-
-  // Character & Asset state
-  const [selectedOutfitId, setSelectedOutfitId] = useState<string>('mint-maid-apron');
-  const [customVrmName, setCustomVrmName] = useState<string | null>(null);
-  const [customVrmBuffer, setCustomVrmBuffer] = useState<ArrayBuffer | null>(null);
+  // Animation Library State
   const [animations, setAnimations] = useState<AnimationItem[]>(KNOWN_ANIMATIONS);
   const animationsRef = useRef<AnimationItem[]>(KNOWN_ANIMATIONS);
   useEffect(() => {
@@ -158,7 +203,6 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
   }, [animations]);
 
   const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [activeAnimKey, setActiveAnimKey] = useState<string>('idle');
   const [loadingAnimKey, setLoadingAnimKey] = useState<string | null>(null);
 
   // Pop-up Animation Selector Modal State
@@ -167,30 +211,12 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
   const [animSearchQuery, setAnimSearchQuery] = useState<string>('');
   const [animCategoryFilter, setAnimCategoryFilter] = useState<string>('all');
 
-  // Emotion / Expression state (Slot 2)
-  const [activeEmotionKey, setActiveEmotionKey] = useState<string>('neutral');
-  const activeEmotionRef = useRef<string>('neutral');
-  const currentEmotionWeightsRef = useRef<Record<string, number>>({});
-
-  // Minimal Collapsible Control Rail (like muxai-3d-preview.html)
-  const [isRailExpanded, setIsRailExpanded] = useState<boolean>(true);
-  const [isScriptEditorOpen, setIsScriptEditorOpen] = useState<boolean>(true);
-  const [showSubtitles, setShowSubtitles] = useState<boolean>(true);
-  const [autoplayOnClose, setAutoplayOnClose] = useState<boolean>(false);
+  // Add Model Preset Modal / Popover
+  const [isAddOutfitModalOpen, setIsAddOutfitModalOpen] = useState<boolean>(false);
 
   // Force Test (Invisible forcefield / pressure physics)
   const [isForceTestActive, setIsForceTestActive] = useState<boolean>(false);
   const isForceTestActiveRef = useRef<boolean>(false);
-  useEffect(() => {
-    isForceTestActiveRef.current = isForceTestActive;
-    if (!isForceTestActive) {
-      if (forceIndicatorRef.current) forceIndicatorRef.current.visible = false;
-      if (controlsRef.current) {
-        controlsRef.current.enabled = interactionModeRef.current === 'camera';
-      }
-    }
-  }, [isForceTestActive]);
-
   const isPointerDownRef = useRef<boolean>(false);
   const pointerInsideCanvasRef = useRef<boolean>(false);
   const pointerDownTimeRef = useRef<number>(0);
@@ -215,9 +241,6 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
     pressure: 0,
   });
 
-  // Fast bone proxy colliders for zero-lag raycasting & accurate animated touch
-  const proxyCollidersRef = useRef<THREE.Mesh[]>([]);
-
   // Look at Camera (biomechanical human limits)
   const [lookAtCamera, setLookAtCamera] = useState<boolean>(true);
   const lookAtCameraRef = useRef<boolean>(true);
@@ -234,44 +257,63 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
   const [isFetchingRemoteAnim, setIsFetchingRemoteAnim] = useState<boolean>(false);
   const [remoteStatusMessage, setRemoteStatusMessage] = useState<string | null>(null);
 
-  // Timeline Script State
-  const [cues, setCues] = useState<TimelineCue[]>(ACT_INITIAL_CUES);
-  const [isPlaying, setIsPlaying] = useState<boolean>(false);
-  const [activePlayingIndex, setActivePlayingIndex] = useState<number | null>(null);
-
-  const applyEmotionByKey = useCallback((emotionKey: string) => {
-    activeEmotionRef.current = emotionKey;
-    setActiveEmotionKey(emotionKey);
-  }, []);
-
-  // Subtitles & Voice Engine state (identical to /chat 3D mode)
+  // Subtitles & Voice Engine state
   const [subtitleState, setSubtitleState] = useState<{
     isActive: boolean;
     text: string;
+    speakerName?: string;
     charIndex: number;
     currentWord: string;
   }>({
     isActive: false,
     text: '',
+    speakerName: '',
     charIndex: 0,
     currentWord: '',
   });
 
-  const cancelPlaybackRef = useRef<boolean>(false);
   const activeUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
-  const timeoutIdRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Synchronize selection rings visibility when interactionMode or activeModelId changes
+  useEffect(() => {
+    interactionModeRef.current = interactionMode;
+    if (controlsRef.current) {
+      controlsRef.current.enabled = interactionMode === 'camera' && !isForceTestActiveRef.current;
+    }
+    runtimeModelsRef.current.forEach((rm, id) => {
+      const isTarget = id === activeModelId && interactionMode === 'model';
+      const isModelVisible = models.find((m) => m.id === id)?.visible ?? true;
+      rm.selectionRing.visible = isTarget && isModelVisible;
+    });
+  }, [interactionMode, activeModelId, models]);
+
+  useEffect(() => {
+    modelMoveSubModeRef.current = modelMoveSubMode;
+  }, [modelMoveSubMode]);
+
+  useEffect(() => {
+    isForceTestActiveRef.current = isForceTestActive;
+    if (!isForceTestActive) {
+      if (forceIndicatorRef.current) forceIndicatorRef.current.visible = false;
+      if (controlsRef.current) {
+        controlsRef.current.enabled = interactionModeRef.current === 'camera';
+      }
+    }
+  }, [isForceTestActive]);
 
   // ----------------------------------------------------
-  // On-Demand Animation Loader & Playback Helper
-  // Ensures animations selected from browser loop until another is picked
+  // Animation Loading for a Specific Model
   // ----------------------------------------------------
-  const ensureAnimationAction = useCallback(
-    async (key: string, loop = true): Promise<THREE.AnimationAction | null> => {
-      const mixer = mixerRef.current;
-      const vrm = vrmRef.current;
-      if (!mixer || !vrm) return null;
+  const ensureAnimationActionForModel = useCallback(
+    async (
+      modelId: string,
+      key: string,
+      loop = true
+    ): Promise<THREE.AnimationAction | null> => {
+      const rm = runtimeModelsRef.current.get(modelId);
+      if (!rm || !rm.mixer || !rm.vrm) return null;
 
-      const existing = actionsMapRef.current.get(key);
+      const existing = rm.actionsMap.get(key);
       if (existing) {
         if (loop) {
           existing.setLoop(THREE.LoopRepeat, Infinity);
@@ -283,16 +325,16 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
         return existing;
       }
 
-      const inFlight = loadingAnimPromisesRef.current.get(key);
+      const inFlight = rm.loadingAnimPromises.get(key);
       if (inFlight) return inFlight;
 
       const animItem = animationsRef.current.find((a) => a.key === key);
       if (!animItem) {
-        return actionsMapRef.current.get('idle') || null;
+        return rm.actionsMap.get('idle') || null;
       }
 
       if (animItem.clip) {
-        const action = mixer.clipAction(animItem.clip);
+        const action = rm.mixer.clipAction(animItem.clip);
         if (loop) {
           action.setLoop(THREE.LoopRepeat, Infinity);
           action.clampWhenFinished = false;
@@ -300,21 +342,21 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
           action.setLoop(THREE.LoopOnce, 1);
           action.clampWhenFinished = true;
         }
-        actionsMapRef.current.set(key, action);
+        rm.actionsMap.set(key, action);
         return action;
       }
 
       const loadPromise = (async (): Promise<THREE.AnimationAction | null> => {
         if (!animItem.candidateUrls || animItem.candidateUrls.length === 0) {
-          return actionsMapRef.current.get('idle') || null;
+          return rm.actionsMap.get('idle') || null;
         }
         for (const url of animItem.candidateUrls) {
           try {
-            const rawClip = await retargetAnimationFromUrl(url, vrm);
-            if (rawClip && mixerRef.current === mixer && vrmRef.current === vrm) {
+            const rawClip = await retargetAnimationFromUrl(url, rm.vrm);
+            if (rawClip && runtimeModelsRef.current.get(modelId) === rm) {
               const clip = localizeAnimationClip(rawClip);
               animItem.clip = clip;
-              const action = mixer.clipAction(clip);
+              const action = rm.mixer.clipAction(clip);
               if (loop) {
                 action.setLoop(THREE.LoopRepeat, Infinity);
                 action.clampWhenFinished = false;
@@ -322,43 +364,48 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
                 action.setLoop(THREE.LoopOnce, 1);
                 action.clampWhenFinished = true;
               }
-              actionsMapRef.current.set(key, action);
+              rm.actionsMap.set(key, action);
               return action;
             }
           } catch {
-            // Try next candidate URL
+            // Try next candidate
           }
         }
-        return actionsMapRef.current.get('idle') || null;
+        return rm.actionsMap.get('idle') || null;
       })();
 
-      loadingAnimPromisesRef.current.set(key, loadPromise);
+      rm.loadingAnimPromises.set(key, loadPromise);
       try {
         return await loadPromise;
       } finally {
-        loadingAnimPromisesRef.current.delete(key);
+        rm.loadingAnimPromises.delete(key);
       }
     },
     []
   );
 
-  const playAnimationByKey = useCallback(
-    async (key: string, crossFadeDuration = 0.35, loop = true) => {
-      setActiveAnimKey(key);
-      const mixer = mixerRef.current;
-      if (!mixer) return;
+  const playAnimationForModel = useCallback(
+    async (modelId: string, key: string, crossFadeDuration = 0.35, loop = true) => {
+      setModels((prev) =>
+        prev.map((m) => (m.id === modelId ? { ...m, activeAnimKey: key } : m))
+      );
+      const rm = runtimeModelsRef.current.get(modelId);
+      if (!rm || !rm.mixer) return;
 
-      let targetAction = actionsMapRef.current.get(key) || null;
+      let targetAction = rm.actionsMap.get(key) || null;
       if (!targetAction) {
-        setLoadingAnimKey(key);
-        targetAction = await ensureAnimationAction(key, loop);
-        setLoadingAnimKey((prev) => (prev === key ? null : prev));
+        if (modelId === activeModelIdRef.current) {
+          setLoadingAnimKey(key);
+        }
+        targetAction = await ensureAnimationActionForModel(modelId, key, loop);
+        if (modelId === activeModelIdRef.current) {
+          setLoadingAnimKey((p) => (p === key ? null : p));
+        }
       }
 
       if (!targetAction) {
-        targetAction = actionsMapRef.current.get('idle') || null;
+        targetAction = rm.actionsMap.get('idle') || null;
       }
-
       if (!targetAction) return;
 
       if (loop) {
@@ -369,7 +416,7 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
         targetAction.clampWhenFinished = true;
       }
 
-      const prevAction = currentActionRef.current;
+      const prevAction = rm.currentAction;
       if (prevAction === targetAction) {
         if (!targetAction.isRunning()) {
           targetAction.reset();
@@ -385,71 +432,78 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
       if (prevAction) {
         prevAction.fadeOut(crossFadeDuration);
       }
-
-      currentActionRef.current = targetAction;
+      rm.currentAction = targetAction;
     },
-    [ensureAnimationAction]
+    [ensureAnimationActionForModel]
   );
 
-  // Stop animations and return to default rest pose (T-pose / bind pose)
-  const stopAllAnimationsToDefaultPose = useCallback((crossFadeDuration = 0.25) => {
-    setActiveAnimKey('none');
-    const mixer = mixerRef.current;
-    const vrm = vrmRef.current;
+  const stopAnimationForModelToRestPose = useCallback((modelId: string, crossFadeDuration = 0.25) => {
+    setModels((prev) =>
+      prev.map((m) => (m.id === modelId ? { ...m, activeAnimKey: 'none' } : m))
+    );
+    const rm = runtimeModelsRef.current.get(modelId);
+    if (!rm) return;
 
-    if (currentActionRef.current) {
-      currentActionRef.current.fadeOut(crossFadeDuration);
+    if (rm.currentAction) {
+      rm.currentAction.fadeOut(crossFadeDuration);
       setTimeout(() => {
-        currentActionRef.current?.stop();
-        currentActionRef.current = null;
+        rm.currentAction?.stop();
+        rm.currentAction = null;
       }, crossFadeDuration * 1000);
     }
 
-    if (mixer) {
-      mixer.stopAllAction();
+    if (rm.mixer) {
+      rm.mixer.stopAllAction();
     }
 
-    if (vrm?.humanoid) {
+    if (rm.vrm?.humanoid) {
       const allBoneNames = [
         'hips', 'spine', 'chest', 'upperChest', 'neck', 'head',
         'leftShoulder', 'leftUpperArm', 'leftLowerArm', 'leftHand',
         'rightShoulder', 'rightUpperArm', 'rightLowerArm', 'rightHand',
         'leftUpperLeg', 'leftLowerLeg', 'leftFoot', 'leftToes',
-        'rightUpperLeg', 'rightLowerLeg', 'rightFoot', 'rightToes'
+        'rightUpperLeg', 'rightLowerLeg', 'rightFoot', 'rightToes',
       ];
       for (const bName of allBoneNames) {
-        const normNode = vrm.humanoid.getNormalizedBoneNode(bName as any);
+        const normNode = rm.vrm.humanoid.getNormalizedBoneNode(bName as any);
         if (normNode) {
           normNode.quaternion.identity();
           normNode.position.set(0, 0, 0);
         }
-        const rawNode = vrm.humanoid.getRawBoneNode(bName as any);
+        const rawNode = rm.vrm.humanoid.getRawBoneNode(bName as any);
         if (rawNode) {
           rawNode.quaternion.identity();
         }
       }
-      vrm.scene.position.set(0, VRM_CONFIG.interaction.bodyOffsetY, 0);
-      vrm.scene.rotation.set(0, 0, 0);
-      vrm.scene.updateMatrixWorld(true);
+      rm.vrm.scene.position.set(0, VRM_CONFIG.interaction.bodyOffsetY, 0);
+      rm.vrm.scene.rotation.set(0, 0, 0);
+      rm.vrm.scene.updateMatrixWorld(true);
     }
   }, []);
 
-  // Toggle animation or disable back to default rest pose if already active
   const handleToggleOrPlayAnimation = useCallback(
     (key: string) => {
-      if (activeAnimKey === key) {
-        stopAllAnimationsToDefaultPose();
+      const activeId = activeModelIdRef.current;
+      const cur = models.find((m) => m.id === activeId);
+      if (cur?.activeAnimKey === key) {
+        stopAnimationForModelToRestPose(activeId);
       } else {
-        playAnimationByKey(key, 0.35, true);
+        playAnimationForModel(activeId, key, 0.35, true);
       }
     },
-    [activeAnimKey, stopAllAnimationsToDefaultPose, playAnimationByKey]
+    [models, stopAnimationForModelToRestPose, playAnimationForModel]
   );
 
+  const applyEmotionForModel = useCallback((modelId: string, emotionKey: string) => {
+    setModels((prev) =>
+      prev.map((m) => (m.id === modelId ? { ...m, activeEmotionKey: emotionKey } : m))
+    );
+  }, []);
+
   // ----------------------------------------------------
-  // Speech Playback Helper (Exact same voice engine as /chat)
+  // Speech Playback Helper
   // ----------------------------------------------------
-  const speakTextPrompt = (text: string): Promise<void> => {
+  const speakTextPrompt = (text: string, speakerName?: string): Promise<void> => {
     return new Promise(async (resolve) => {
       if (!text.trim() || typeof window === 'undefined' || !('speechSynthesis' in window)) {
         resolve();
@@ -457,8 +511,6 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
       }
 
       window.speechSynthesis.cancel();
-
-      // Resolve prioritized persona female voice from VOICE_CONFIG
       const voice = await waitForPersonaVoice(VOICE_CONFIG.waitVoiceTimeoutMs);
 
       const utterance = new SpeechSynthesisUtterance(text);
@@ -475,6 +527,7 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
         setSubtitleState({
           isActive: true,
           text,
+          speakerName,
           charIndex: 0,
           currentWord: text.split(/\s+/)[0] || '',
         });
@@ -494,6 +547,7 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
           ...prev,
           isActive: true,
           text,
+          speakerName,
           charIndex,
           currentWord: word,
         }));
@@ -518,157 +572,129 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
   };
 
   // ----------------------------------------------------
-  // Sequential Timeline Playback
+  // Play Script for a Specific Model (Independent Execution!)
   // ----------------------------------------------------
-  const handlePlayTimeline = async () => {
-    if (cues.length === 0) return;
+  const handlePlayModelScript = async (modelId: string) => {
+    const targetModel = models.find((m) => m.id === modelId);
+    if (!targetModel || targetModel.cues.length === 0) return;
 
-    cancelPlaybackRef.current = false;
-    setIsPlaying(true);
+    const rm = runtimeModelsRef.current.get(modelId);
+    if (rm) rm.cancelPlayback = false;
 
+    setModels((prev) =>
+      prev.map((m) =>
+        m.id === modelId ? { ...m, isPlaying: true, activePlayingIndex: 0 } : m
+      )
+    );
+
+    const cues = targetModel.cues;
     for (let i = 0; i < cues.length; i++) {
-      if (cancelPlaybackRef.current) break;
+      if (rm?.cancelPlayback) break;
 
       const cue = cues[i];
-      setActivePlayingIndex(i);
+      setModels((prev) =>
+        prev.map((m) =>
+          m.id === modelId ? { ...m, activePlayingIndex: i } : m
+        )
+      );
 
-      // Scroll card into view
-      if (timelineScrollRef.current) {
+      // Scroll timeline if this is active model
+      if (modelId === activeModelIdRef.current && timelineScrollRef.current) {
         const card = timelineScrollRef.current.children[i] as HTMLElement;
         if (card) {
           card.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
         }
       }
 
-      // 1. Play animation (or idle)
+      // 1. Play motion
       const animKey = cue.animationKey || 'idle';
-      await playAnimationByKey(animKey);
-      if (cancelPlaybackRef.current) break;
+      await playAnimationForModel(modelId, animKey);
+      if (rm?.cancelPlayback) break;
 
-      // 2. Apply facial emotion (Slot 2)
+      // 2. Apply facial emotion
       const emoKey = cue.emotionKey || 'neutral';
-      applyEmotionByKey(emoKey);
+      applyEmotionForModel(modelId, emoKey);
 
-      // 3. Execute script
+      // 3. Spoken script
       const hasScript = Boolean(cue.text && cue.text.trim().length > 0);
       if (hasScript) {
-        await speakTextPrompt(cue.text);
+        await speakTextPrompt(cue.text, targetModel.name);
         await new Promise((r) => setTimeout(r, 400));
       } else {
-        // Silent animation scenario
         const durationMs = Math.max(1, (cue.durationSec || 3.5) * 1000);
         await new Promise((resolve) => {
-          timeoutIdRef.current = setTimeout(resolve, durationMs);
+          if (rm) {
+            rm.timeoutId = setTimeout(resolve, durationMs);
+          } else {
+            setTimeout(resolve, durationMs);
+          }
         });
       }
     }
 
-    handleStopPlayback();
+    handleStopModelScript(modelId);
   };
 
-  const handleStopPlayback = () => {
-    cancelPlaybackRef.current = true;
-    if (timeoutIdRef.current) clearTimeout(timeoutIdRef.current);
+  const handleStopModelScript = (modelId: string) => {
+    const rm = runtimeModelsRef.current.get(modelId);
+    if (rm) {
+      rm.cancelPlayback = true;
+      if (rm.timeoutId) clearTimeout(rm.timeoutId);
+    }
     if (typeof window !== 'undefined' && window.speechSynthesis) {
       window.speechSynthesis.cancel();
     }
     lipSyncManager.endSpeech();
-    setIsPlaying(false);
-    setActivePlayingIndex(null);
-    setSubtitleState((prev) => ({ ...prev, isActive: false }));
-    playAnimationByKey('idle');
-    applyEmotionByKey('neutral');
-  };
 
-  const handleCollapseRail = () => {
-    setIsRailExpanded(false);
-    if (autoplayOnClose) {
-      setIsScriptEditorOpen(false);
-      if (!isPlaying) {
-        handlePlayTimeline();
-      }
-    }
-  };
-
-  const handleToggleRail = () => {
-    if (isRailExpanded) {
-      handleCollapseRail();
-    } else {
-      // Reopening the control panel via logo stops active animation sequence
-      handleStopPlayback();
-      setIsRailExpanded(true);
-    }
-  };
-
-  // ----------------------------------------------------
-  // Three.js Stage, Lighting & Render Loop
-  // ----------------------------------------------------
-  useEffect(() => {
-    const container = containerRef.current;
-    const canvas = canvasRef.current;
-    if (!container || !canvas) return;
-
-    let isDisposed = false;
-    let rafId = 0;
-
-    const scene = new THREE.Scene();
-    sceneRef.current = scene;
-
-    const camera = new THREE.PerspectiveCamera(
-      28,
-      container.clientWidth / container.clientHeight,
-      0.1,
-      50.0
+    setModels((prev) =>
+      prev.map((m) =>
+        m.id === modelId ? { ...m, isPlaying: false, activePlayingIndex: null } : m
+      )
     );
-    camera.position.set(0.0, 1.2, 2.0);
-    cameraRef.current = camera;
+    setSubtitleState((prev) => ({ ...prev, isActive: false }));
+    playAnimationForModel(modelId, 'idle');
+    applyEmotionForModel(modelId, 'neutral');
+  };
 
-    const renderer = new THREE.WebGLRenderer({
-      canvas,
-      alpha: true,
-      antialias: true,
-      powerPreference: 'high-performance',
+  const handleStopAllScripts = () => {
+    models.forEach((m) => {
+      handleStopModelScript(m.id);
     });
-    renderer.setSize(container.clientWidth, container.clientHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    rendererRef.current = renderer;
+  };
 
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.05;
-    controls.target.set(0.0, 1.05, 0.0);
-    controls.minDistance = 0.8;
-    controls.maxDistance = 4.5;
-    controls.maxPolarAngle = Math.PI / 2 + 0.1;
-    controlsRef.current = controls;
+  const handlePlayAllScriptsSimultaneously = () => {
+    models.filter((m) => m.visible).forEach((m) => {
+      handlePlayModelScript(m.id);
+    });
+  };
 
-    // Lighting
-    scene.add(new THREE.AmbientLight(0xffffff, 0.9));
-    const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
-    dirLight.position.set(1.5, 2.5, 2.0);
-    scene.add(dirLight);
+  // ----------------------------------------------------
+  // Helper to Build VRM Scene & Attach Components
+  // ----------------------------------------------------
+  const instantiateVrmInstance = async (
+    id: string,
+    vrm: VRM,
+    initialOffset = new THREE.Vector3(0, 0, 0),
+    initialYaw = 0
+  ): Promise<RuntimeModelInstance> => {
+    const scene = sceneRef.current;
+    if (!scene) throw new Error('Scene not ready');
 
-    const fillLight = new THREE.DirectionalLight(0xe0f2fe, 0.6);
-    fillLight.position.set(-1.5, 1.5, 1.5);
-    scene.add(fillLight);
+    vrm.scene.position.set(0, VRM_CONFIG.interaction.bodyOffsetY, 0);
+    vrm.scene.rotation.set(0, 0, 0);
+    vrm.scene.traverse((obj) => {
+      obj.frustumCulled = false;
+    });
 
-    // Floor Grid (subtle)
-    const grid = new THREE.GridHelper(8, 16, 0x55d2f6, 0x94a3b8);
-    grid.position.y = -0.16;
-    grid.material.opacity = 0.2;
-    grid.material.transparent = true;
-    scene.add(grid);
+    // Model Root Group for independent local/world positioning
+    const rootGroup = new THREE.Group();
+    rootGroup.name = `ActModelRootGroup_${id}`;
+    rootGroup.position.copy(initialOffset);
+    rootGroup.rotation.y = initialYaw;
+    rootGroup.add(vrm.scene);
+    scene.add(rootGroup);
 
-    // Dedicated Model Root Group so user can grab & move the model in world space
-    // while all VRM & Mixamo animations play strictly in the model's local coordinate space
-    const modelRootGroup = new THREE.Group();
-    modelRootGroup.name = 'ActModelRootGroup';
-    scene.add(modelRootGroup);
-    modelRootGroupRef.current = modelRootGroup;
-
-    // Local-Space Selection Ring & Facing Arrow Gizmo under the model's feet
+    // Selection Ring Gizmo under the model's feet
     const selectionRingGroup = new THREE.Group();
     selectionRingGroup.position.set(0, -0.155, 0);
     const baseRing = new THREE.Mesh(
@@ -697,7 +723,6 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
     innerDisc.rotation.x = -Math.PI / 2;
     selectionRingGroup.add(innerDisc);
 
-    // Forward direction indicator (+Z local forward)
     const dirCone = new THREE.Mesh(
       new THREE.ConeGeometry(0.06, 0.14, 16),
       new THREE.MeshBasicMaterial({
@@ -711,11 +736,605 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
     dirCone.position.set(0, 0.01, 0.43);
     selectionRingGroup.add(dirCone);
 
-    selectionRingGroup.visible = interactionModeRef.current === 'model';
-    modelRootGroup.add(selectionRingGroup);
-    modelSelectionRingRef.current = selectionRingGroup;
+    selectionRingGroup.visible =
+      id === activeModelIdRef.current && interactionModeRef.current === 'model';
+    rootGroup.add(selectionRingGroup);
 
-    // Force Test Visual Indicator (invisible forcefield ripple halo)
+    // Proxy Colliders for raycast & hit detection
+    const proxyColliders: THREE.Mesh[] = [];
+    if (vrm.humanoid) {
+      const colliderDefs: Array<{
+        boneName: string;
+        geo: THREE.BufferGeometry;
+        offset?: [number, number, number];
+      }> = [
+        { boneName: 'head', geo: new THREE.SphereGeometry(0.14, 8, 8), offset: [0, 0.08, 0] },
+        { boneName: 'neck', geo: new THREE.SphereGeometry(0.08, 8, 8), offset: [0, 0.04, 0] },
+        { boneName: 'chest', geo: new THREE.BoxGeometry(0.26, 0.22, 0.18), offset: [0, 0.06, 0] },
+        { boneName: 'spine', geo: new THREE.SphereGeometry(0.15, 8, 8) },
+        { boneName: 'hips', geo: new THREE.SphereGeometry(0.2, 8, 8), offset: [0, -0.04, 0] },
+        { boneName: 'leftUpperArm', geo: new THREE.CylinderGeometry(0.06, 0.06, 0.22, 6), offset: [0, -0.1, 0] },
+        { boneName: 'rightUpperArm', geo: new THREE.CylinderGeometry(0.06, 0.06, 0.22, 6), offset: [0, -0.1, 0] },
+        { boneName: 'leftLowerArm', geo: new THREE.CylinderGeometry(0.05, 0.05, 0.22, 6), offset: [0, -0.1, 0] },
+        { boneName: 'rightLowerArm', geo: new THREE.CylinderGeometry(0.05, 0.05, 0.22, 6), offset: [0, -0.1, 0] },
+        { boneName: 'leftUpperLeg', geo: new THREE.CylinderGeometry(0.08, 0.08, 0.32, 6), offset: [0, -0.15, 0] },
+        { boneName: 'rightUpperLeg', geo: new THREE.CylinderGeometry(0.08, 0.08, 0.32, 6), offset: [0, -0.15, 0] },
+        { boneName: 'leftLowerLeg', geo: new THREE.CylinderGeometry(0.07, 0.07, 0.32, 6), offset: [0, -0.15, 0] },
+        { boneName: 'rightLowerLeg', geo: new THREE.CylinderGeometry(0.07, 0.07, 0.32, 6), offset: [0, -0.15, 0] },
+      ];
+
+      const proxyMat = new THREE.MeshBasicMaterial({
+        transparent: true,
+        opacity: 0.0,
+        depthWrite: false,
+      });
+
+      for (const def of colliderDefs) {
+        const boneNode = vrm.humanoid.getNormalizedBoneNode(def.boneName as any);
+        if (boneNode) {
+          const mesh = new THREE.Mesh(def.geo, proxyMat);
+          mesh.visible = true;
+          if (def.offset) {
+            mesh.position.set(def.offset[0], def.offset[1], def.offset[2]);
+          }
+          mesh.userData = { modelId: id, boneName: def.boneName, boneNode };
+          boneNode.add(mesh);
+          proxyColliders.push(mesh);
+        }
+      }
+    }
+
+    const mixer = new THREE.AnimationMixer(vrm.scene);
+    const rm: RuntimeModelInstance = {
+      id,
+      rootGroup,
+      selectionRing: selectionRingGroup,
+      vrm,
+      mixer,
+      actionsMap: new Map(),
+      loadingAnimPromises: new Map(),
+      currentAction: null,
+      currentEmotionWeights: {},
+      proxyColliders,
+      blinkTimer: 0,
+      nextBlinkTime: 2.0 + Math.random() * 2.0,
+      isBlinking: false,
+      cancelPlayback: false,
+      timeoutId: null,
+    };
+
+    runtimeModelsRef.current.set(id, rm);
+
+    // Load default idle animation
+    ensureAnimationActionForModel(id, 'idle').then((action) => {
+      if (action) {
+        action.play();
+        rm.currentAction = action;
+      }
+    });
+
+    return rm;
+  };
+
+  // ----------------------------------------------------
+  // Add a New Model from VRM ArrayBuffer
+  // ----------------------------------------------------
+  const addNewModelFromBuffer = async (
+    name: string,
+    buffer: ArrayBuffer,
+    fileName?: string,
+    outfitId?: string
+  ): Promise<string> => {
+    setIsLoading(true);
+    const gltfLoader = new GLTFLoader();
+    gltfLoader.register((parser) => new VRMLoaderPlugin(parser));
+
+    return new Promise((resolve, reject) => {
+      gltfLoader.parse(
+        buffer,
+        '',
+        async (gltf) => {
+          const vrm = gltf.userData.vrm as VRM;
+          if (!vrm) {
+            setIsLoading(false);
+            return reject(new Error('Invalid VRM asset'));
+          }
+
+          VRMUtils.removeUnnecessaryVertices(gltf.scene);
+          VRMUtils.combineSkeletons(gltf.scene);
+          try {
+            VRMUtils.rotateVRM0(vrm);
+          } catch {}
+
+          const newId = `model-${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+          const currentCount = runtimeModelsRef.current.size;
+
+          // Stagger placement on X axis so characters stand side-by-side
+          const xOffset =
+            currentCount === 0
+              ? 0
+              : (currentCount % 2 === 1 ? 1 : -1) * 0.75 * Math.ceil(currentCount / 2);
+
+          const initialPos = new THREE.Vector3(xOffset, 0, 0);
+          await instantiateVrmInstance(newId, vrm, initialPos, 0);
+
+          const newModelItem: ActModelItem = {
+            id: newId,
+            name,
+            fileName: fileName || `${name}.vrm`,
+            outfitId,
+            isCustom: !outfitId,
+            visible: true,
+            activeAnimKey: 'idle',
+            activeEmotionKey: 'neutral',
+            cues: [
+              {
+                id: `cue_${Date.now()}_1`,
+                name: 'Intro Step',
+                text: `Hello! I am ${name}, ready to act on stage!`,
+                animationKey: 'wave',
+                emotionKey: 'happy',
+                durationSec: 3.5,
+              },
+              {
+                id: `cue_${Date.now()}_2`,
+                name: 'Standby',
+                text: '',
+                animationKey: 'dance',
+                emotionKey: 'fun',
+                durationSec: 4.0,
+              },
+            ],
+            isPlaying: false,
+            activePlayingIndex: null,
+            transform: {
+              x: Number(xOffset.toFixed(2)),
+              y: 0,
+              z: 0,
+              yawDeg: 0,
+            },
+          };
+
+          setModels((prev) => [...prev, newModelItem]);
+          setActiveModelId(newId);
+          setIsLoading(false);
+          resolve(newId);
+        },
+        (err) => {
+          setIsLoading(false);
+          reject(err);
+        }
+      );
+    });
+  };
+
+  // ----------------------------------------------------
+  // Add a New Model from Preset Outfit
+  // ----------------------------------------------------
+  const handleAddPresetModel = async (outfitId: string) => {
+    setIsAddOutfitModalOpen(false);
+    setIsLoading(true);
+    const outfit = WARDROBE_OUTFITS.find((o) => o.id === outfitId) || WARDROBE_OUTFITS[0];
+    const modelUrl = `/api/vrm?file=${encodeURIComponent(outfit.fileName)}`;
+
+    try {
+      const resp = await fetch(modelUrl);
+      const buf = resp.ok
+        ? await resp.arrayBuffer()
+        : await fetch(outfit.modelUrl).then((r) => r.arrayBuffer());
+
+      await addNewModelFromBuffer(
+        `Hana (${outfit.name.replace(/Hana\s*/i, '').trim() || outfit.id})`,
+        buf,
+        outfit.fileName,
+        outfit.id
+      );
+    } catch (err) {
+      console.error('Failed to add preset outfit model:', err);
+      setIsLoading(false);
+    }
+  };
+
+  // ----------------------------------------------------
+  // Upload Custom VRM -> Adds as a New Independent Model
+  // ----------------------------------------------------
+  const handleVrmUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const buf = await file.arrayBuffer();
+      const cleanName = file.name.replace(/\.vrm$/i, '');
+      await addNewModelFromBuffer(cleanName || `Custom Actor ${models.length + 1}`, buf, file.name);
+    } catch (err) {
+      console.error('VRM upload error:', err);
+    } finally {
+      e.target.value = '';
+    }
+  };
+
+  // ----------------------------------------------------
+  // Remote Fetcher: Fetch VRM Model -> Adds as a New Independent Model
+  // ----------------------------------------------------
+  const handleFetchRemoteModel = async () => {
+    const version = remoteModelVersion.trim() || '1.2';
+    const outfit = remoteModelOutfit.trim();
+    const fileName = outfit ? `hana_v${version}_${outfit}_vrm1.vrm` : `hana_v${version}_vrm1.vrm`;
+
+    setIsFetchingRemoteModel(true);
+    setRemoteStatusMessage(`Fetching ${fileName}...`);
+
+    const candidateUrls = [
+      `/api/vrm?file=${encodeURIComponent(fileName)}`,
+      `https://muxai.vercel.app/${fileName}`,
+      `https://ai.mux8.com/${fileName}`,
+    ];
+
+    let buffer: ArrayBuffer | null = null;
+    for (const url of candidateUrls) {
+      try {
+        const resp = await fetch(url);
+        if (resp.ok) {
+          const buf = await resp.arrayBuffer();
+          if (buf && buf.byteLength > 1000) {
+            buffer = buf;
+            break;
+          }
+        }
+      } catch {}
+    }
+
+    if (buffer) {
+      try {
+        const actorName = outfit
+          ? `Hana (${outfit.charAt(0).toUpperCase() + outfit.slice(1)})`
+          : `Hana v${version}`;
+        await addNewModelFromBuffer(actorName, buffer, fileName);
+        setRemoteStatusMessage(`Successfully added ${fileName} as a new model!`);
+      } catch (err) {
+        setRemoteStatusMessage(`Failed to parse fetched model ${fileName}`);
+      }
+    } else {
+      setRemoteStatusMessage(`Unable to fetch ${fileName} from remote sources.`);
+    }
+
+    setIsFetchingRemoteModel(false);
+    setTimeout(() => setRemoteStatusMessage(null), 4000);
+  };
+
+  // ----------------------------------------------------
+  // Toggle Show / Hide Model
+  // ----------------------------------------------------
+  const handleToggleModelVisibility = (id: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setModels((prev) =>
+      prev.map((m) => {
+        if (m.id === id) {
+          const nextVis = !m.visible;
+          const rm = runtimeModelsRef.current.get(id);
+          if (rm) {
+            rm.rootGroup.visible = nextVis;
+            rm.selectionRing.visible =
+              nextVis && id === activeModelIdRef.current && interactionModeRef.current === 'model';
+          }
+          return { ...m, visible: nextVis };
+        }
+        return m;
+      })
+    );
+  };
+
+  // ----------------------------------------------------
+  // Remove Model from Multi-Model Cast
+  // ----------------------------------------------------
+  const handleRemoveModel = (id: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    const rm = runtimeModelsRef.current.get(id);
+    if (rm) {
+      handleStopModelScript(id);
+      if (rm.rootGroup.parent) {
+        rm.rootGroup.parent.remove(rm.rootGroup);
+      }
+      VRMUtils.deepDispose(rm.vrm.scene);
+      runtimeModelsRef.current.delete(id);
+    }
+
+    setModels((prev) => {
+      const remaining = prev.filter((m) => m.id !== id);
+      if (remaining.length === 0) {
+        // If user deletes last model, spawn a fresh default model so stage never breaks
+        setTimeout(() => {
+          const defaultOutfit = WARDROBE_OUTFITS[0];
+          fetch(`/api/vrm?file=${encodeURIComponent(defaultOutfit.fileName)}`)
+            .then((r) => r.arrayBuffer())
+            .then((buf) => {
+              addNewModelFromBuffer('Hana (Default)', buf, defaultOutfit.fileName, defaultOutfit.id);
+            })
+            .catch(() => {});
+        }, 100);
+      } else if (activeModelId === id) {
+        setActiveModelId(remaining[0].id);
+      }
+      return remaining;
+    });
+  };
+
+  // ----------------------------------------------------
+  // Upload Custom FBX -> Adds Motion to Animation Library
+  // ----------------------------------------------------
+  const handleFbxUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    const rm = runtimeModelsRef.current.get(activeModelId);
+    if (!file || !rm || !rm.vrm || !rm.mixer) return;
+
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const fbxLoader = new FBXLoader();
+      const fbxGroup = fbxLoader.parse(arrayBuffer, '');
+      const rawClip = retargetAnimation(fbxGroup, rm.vrm);
+      if (rawClip) {
+        const clip = localizeAnimationClip(rawClip);
+        const key = `custom_${Date.now()}`;
+        const name = file.name.replace(/\.fbx$/i, '');
+        const action = rm.mixer.clipAction(clip);
+        action.setLoop(THREE.LoopRepeat, Infinity);
+        action.clampWhenFinished = false;
+        rm.actionsMap.set(key, action);
+
+        const newItem: AnimationItem = {
+          key,
+          name,
+          fileName: file.name,
+          category: 'custom',
+          isCustom: true,
+          clip,
+        };
+        setAnimations((prev) => [...prev, newItem]);
+        animationsRef.current = [...animationsRef.current, newItem];
+        playAnimationForModel(activeModelId, key, 0.35, true);
+      }
+    } catch (err) {
+      console.error('FBX upload error:', err);
+    } finally {
+      e.target.value = '';
+    }
+  };
+
+  // ----------------------------------------------------
+  // Remote Fetcher: Fetch Mixamo Animation (.fbx)
+  // ----------------------------------------------------
+  const handleFetchRemoteAnimation = async () => {
+    const animName = remoteAnimName.trim() || 'dance';
+    const fileName = `mixamo_${animName}.fbx`;
+    const rm = runtimeModelsRef.current.get(activeModelId);
+
+    if (!rm || !rm.vrm || !rm.mixer) {
+      setRemoteStatusMessage('No active model selected to apply animation to.');
+      return;
+    }
+
+    setIsFetchingRemoteAnim(true);
+    setRemoteStatusMessage(`Fetching ${fileName}...`);
+
+    const candidateUrls = [
+      `/api/animation/${animName}`,
+      `https://muxai.vercel.app/${fileName}`,
+      `https://ai.mux8.com/${fileName}`,
+    ];
+
+    let buffer: ArrayBuffer | null = null;
+    for (const url of candidateUrls) {
+      try {
+        const resp = await fetch(url);
+        if (resp.ok) {
+          const buf = await resp.arrayBuffer();
+          if (buf && buf.byteLength > 1000) {
+            buffer = buf;
+            break;
+          }
+        }
+      } catch {}
+    }
+
+    if (buffer) {
+      try {
+        const fbxLoader = new FBXLoader();
+        const fbxGroup = fbxLoader.parse(buffer, '');
+        const rawClip = retargetAnimation(fbxGroup, rm.vrm);
+        if (rawClip) {
+          const clip = localizeAnimationClip(rawClip);
+          const key = `remote_${animName}_${Date.now()}`;
+          const action = rm.mixer.clipAction(clip);
+          action.setLoop(THREE.LoopRepeat, Infinity);
+          action.clampWhenFinished = false;
+          rm.actionsMap.set(key, action);
+
+          const newItem: AnimationItem = {
+            key,
+            name: `Remote: ${animName}`,
+            fileName,
+            category: 'custom',
+            isCustom: true,
+            clip,
+          };
+          setAnimations((prev) => [...prev, newItem]);
+          animationsRef.current = [...animationsRef.current, newItem];
+          await playAnimationForModel(activeModelId, key, 0.35, true);
+          setRemoteStatusMessage(`Playing ${fileName} in loop on ${activeModel?.name}`);
+        } else {
+          setRemoteStatusMessage(`Failed to retarget animation from ${fileName}`);
+        }
+      } catch (err) {
+        console.error(err);
+        setRemoteStatusMessage(`Failed to parse FBX animation from ${fileName}`);
+      }
+    } else {
+      setRemoteStatusMessage(`Unable to fetch ${fileName} from remote sources.`);
+    }
+
+    setIsFetchingRemoteAnim(false);
+    setTimeout(() => setRemoteStatusMessage(null), 4000);
+  };
+
+  // Reset Model Transform
+  const handleResetActiveModelTransform = useCallback(() => {
+    const rm = runtimeModelsRef.current.get(activeModelIdRef.current);
+    if (rm) {
+      rm.rootGroup.position.set(0, 0, 0);
+      rm.rootGroup.rotation.set(0, 0, 0);
+      rm.rootGroup.updateMatrixWorld(true);
+    }
+    setModels((prev) =>
+      prev.map((m) =>
+        m.id === activeModelIdRef.current
+          ? { ...m, transform: { x: 0, y: 0, z: 0, yawDeg: 0 } }
+          : m
+      )
+    );
+  }, []);
+
+  // ----------------------------------------------------
+  // Timeline Step Operations (Active Model's Independent Script)
+  // ----------------------------------------------------
+  const handleAddStep = () => {
+    if (!activeModel) return;
+    const newCue: TimelineCue = {
+      id: `cue_${Date.now()}`,
+      name: `Step ${activeModel.cues.length + 1}`,
+      text: '',
+      animationKey: 'idle',
+      emotionKey: 'happy',
+      durationSec: 3.5,
+    };
+    setModels((prev) =>
+      prev.map((m) => (m.id === activeModelId ? { ...m, cues: [...m.cues, newCue] } : m))
+    );
+  };
+
+  const handleDeleteStep = (cueId: string) => {
+    setModels((prev) =>
+      prev.map((m) =>
+        m.id === activeModelId
+          ? { ...m, cues: m.cues.filter((c) => c.id !== cueId) }
+          : m
+      )
+    );
+  };
+
+  const handleUpdateStep = (cueId: string, updates: Partial<TimelineCue>) => {
+    setModels((prev) =>
+      prev.map((m) =>
+        m.id === activeModelId
+          ? {
+              ...m,
+              cues: m.cues.map((c) => (c.id === cueId ? { ...c, ...updates } : c)),
+            }
+          : m
+      )
+    );
+  };
+
+  const openAnimationModalForCue = (cueId: string | null) => {
+    setAnimModalTargetCueId(cueId);
+    setAnimSearchQuery('');
+    setIsAnimModalOpen(true);
+  };
+
+  const filteredModalAnimations = useMemo(() => {
+    const q = animSearchQuery.trim().toLowerCase();
+    return animations.filter((anim) => {
+      if (animCategoryFilter !== 'all') {
+        const cat = anim.isCustom ? 'custom' : anim.category || 'standby';
+        if (cat !== animCategoryFilter) return false;
+      }
+      if (!q) return true;
+      return (
+        anim.name.toLowerCase().includes(q) ||
+        anim.key.toLowerCase().includes(q) ||
+        (anim.fileName || '').toLowerCase().includes(q)
+      );
+    });
+  }, [animations, animSearchQuery, animCategoryFilter]);
+
+  const targetCueIndex = useMemo(() => {
+    if (!animModalTargetCueId || !activeModel) return null;
+    const idx = activeModel.cues.findIndex((c) => c.id === animModalTargetCueId);
+    return idx >= 0 ? idx : null;
+  }, [animModalTargetCueId, activeModel]);
+
+  const currentSelectedModalAnimKey = useMemo(() => {
+    if (animModalTargetCueId && activeModel) {
+      const cue = activeModel.cues.find((c) => c.id === animModalTargetCueId);
+      return cue?.animationKey || 'idle';
+    }
+    return activeModel?.activeAnimKey || 'idle';
+  }, [animModalTargetCueId, activeModel]);
+
+  // ----------------------------------------------------
+  // Three.js Stage, Lighting, Interactions & Multi-Model Render Loop
+  // ----------------------------------------------------
+  useEffect(() => {
+    const container = containerRef.current;
+    const canvas = canvasRef.current;
+    if (!container || !canvas) return;
+
+    let isDisposed = false;
+    let rafId = 0;
+
+    const scene = new THREE.Scene();
+    sceneRef.current = scene;
+
+    const camera = new THREE.PerspectiveCamera(
+      28,
+      container.clientWidth / container.clientHeight,
+      0.001,
+      10000.0
+    );
+    camera.position.set(0.0, 1.2, 2.4);
+    cameraRef.current = camera;
+
+    const renderer = new THREE.WebGLRenderer({
+      canvas,
+      alpha: true,
+      antialias: true,
+      powerPreference: 'high-performance',
+    });
+    renderer.setSize(container.clientWidth, container.clientHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    rendererRef.current = renderer;
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.target.set(0.0, 1.05, 0.0);
+    // Unconstrained zoom and full 360 degree camera angles without any limits
+    controls.minDistance = 0;
+    controls.maxDistance = Infinity;
+    controls.minPolarAngle = 0;
+    controls.maxPolarAngle = Math.PI;
+    controls.minAzimuthAngle = -Infinity;
+    controls.maxAzimuthAngle = Infinity;
+    controlsRef.current = controls;
+
+    // Lighting
+    scene.add(new THREE.AmbientLight(0xffffff, 0.95));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+    dirLight.position.set(1.5, 2.5, 2.0);
+    scene.add(dirLight);
+
+    const fillLight = new THREE.DirectionalLight(0xe0f2fe, 0.65);
+    fillLight.position.set(-1.5, 1.5, 1.5);
+    scene.add(fillLight);
+
+    // Floor Grid
+    const grid = new THREE.GridHelper(10, 20, 0x55d2f6, 0x94a3b8);
+    grid.position.y = -0.16;
+    grid.material.opacity = 0.22;
+    grid.material.transparent = true;
+    scene.add(grid);
+
+    // Force Test Visual Indicator
     const forceGroup = new THREE.Group();
     const innerOrb = new THREE.Mesh(
       new THREE.SphereGeometry(0.035, 16, 16),
@@ -742,8 +1361,8 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
     scene.add(forceGroup);
     forceIndicatorRef.current = forceGroup;
 
-    // Raycaster for Force Test & Model Grabbing interaction
-    const forceRaycaster = new THREE.Raycaster();
+    // Raycasters & Dragging math
+    const raycaster = new THREE.Raycaster();
     const modelDragPlane = new THREE.Plane();
     const dragStartPlaneHit = new THREE.Vector3();
     let hasValidStartPlaneHit = false;
@@ -753,19 +1372,26 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
     let dragStartClientY = 0;
     let dragButton = 0;
 
-    const syncModelTransformState = () => {
-      if (!modelRootGroupRef.current) return;
-      const p = modelRootGroupRef.current.position;
-      const r = modelRootGroupRef.current.rotation;
-      setModelTransformDisplay({
-        x: Number(p.x.toFixed(2)),
-        y: Number(p.y.toFixed(2)),
-        z: Number(p.z.toFixed(2)),
-        yawDeg: Math.round((r.y * 180) / Math.PI),
-      });
+    const syncModelTransformToState = (rm: RuntimeModelInstance) => {
+      const p = rm.rootGroup.position;
+      const r = rm.rootGroup.rotation;
+      setModels((prev) =>
+        prev.map((m) =>
+          m.id === rm.id
+            ? {
+                ...m,
+                transform: {
+                  x: Number(p.x.toFixed(2)),
+                  y: Number(p.y.toFixed(2)),
+                  z: Number(p.z.toFixed(2)),
+                  yawDeg: Math.round((r.y * 180) / Math.PI),
+                },
+              }
+            : m
+        )
+      );
     };
 
-    // Canvas Pointer Event Listeners for Force Test & Model Movement
     const updatePointerPos = (e: PointerEvent) => {
       if (!canvas) return;
       pointerInsideCanvasRef.current = true;
@@ -789,7 +1415,31 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
         return;
       }
 
-      if (interactionModeRef.current === 'model' && modelRootGroupRef.current && cameraRef.current) {
+      if (cameraRef.current) {
+        raycaster.setFromCamera(
+          new THREE.Vector2(pointerNdcRef.current.x, pointerNdcRef.current.y),
+          cameraRef.current
+        );
+
+        // Raycast against all visible models' proxy colliders to allow clicking on a model to select it!
+        const allColliders: THREE.Mesh[] = [];
+        runtimeModelsRef.current.forEach((rm) => {
+          if (rm.rootGroup.visible) {
+            allColliders.push(...rm.proxyColliders);
+          }
+        });
+
+        const hits = raycaster.intersectObjects(allColliders, false);
+        if (hits.length > 0) {
+          const hitModelId = hits[0].object.userData.modelId as string;
+          if (hitModelId && hitModelId !== activeModelIdRef.current) {
+            setActiveModelId(hitModelId);
+          }
+        }
+      }
+
+      const activeRm = runtimeModelsRef.current.get(activeModelIdRef.current);
+      if (interactionModeRef.current === 'model' && activeRm && cameraRef.current) {
         if (controlsRef.current) {
           controlsRef.current.enabled = false;
         }
@@ -797,10 +1447,10 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
         dragButton = e.button;
         dragStartClientX = e.clientX;
         dragStartClientY = e.clientY;
-        dragStartModelPos.copy(modelRootGroupRef.current.position);
-        dragStartYaw = modelRootGroupRef.current.rotation.y;
+        dragStartModelPos.copy(activeRm.rootGroup.position);
+        dragStartYaw = activeRm.rootGroup.rotation.y;
 
-        forceRaycaster.setFromCamera(
+        raycaster.setFromCamera(
           new THREE.Vector2(pointerNdcRef.current.x, pointerNdcRef.current.y),
           cameraRef.current
         );
@@ -809,21 +1459,19 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
         if (subMode === 'xy') {
           const camDir = new THREE.Vector3();
           cameraRef.current.getWorldDirection(camDir).negate();
-          const anchor = modelRootGroupRef.current.position
-            .clone()
-            .add(new THREE.Vector3(0, 0.85, 0));
+          const anchor = activeRm.rootGroup.position.clone().add(new THREE.Vector3(0, 0.85, 0));
           modelDragPlane.setFromNormalAndCoplanarPoint(camDir, anchor);
           hasValidStartPlaneHit = Boolean(
-            forceRaycaster.ray.intersectPlane(modelDragPlane, dragStartPlaneHit)
+            raycaster.ray.intersectPlane(modelDragPlane, dragStartPlaneHit)
           );
         } else if (subMode === 'xz') {
           modelDragPlane.setFromNormalAndCoplanarPoint(
             new THREE.Vector3(0, 1, 0),
-            modelRootGroupRef.current.position
+            activeRm.rootGroup.position
           );
           hasValidStartPlaneHit =
-            Math.abs(forceRaycaster.ray.direction.y) > 0.16 &&
-            Boolean(forceRaycaster.ray.intersectPlane(modelDragPlane, dragStartPlaneHit));
+            Math.abs(raycaster.ray.direction.y) > 0.16 &&
+            Boolean(raycaster.ray.intersectPlane(modelDragPlane, dragStartPlaneHit));
         } else {
           hasValidStartPlaneHit = false;
         }
@@ -836,15 +1484,13 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
 
     const handlePointerMove = (e: PointerEvent) => {
       updatePointerPos(e);
+      if (isForceTestActiveRef.current) return;
 
-      if (isForceTestActiveRef.current) {
-        return;
-      }
-
+      const activeRm = runtimeModelsRef.current.get(activeModelIdRef.current);
       if (
         isDraggingModelRef.current &&
         interactionModeRef.current === 'model' &&
-        modelRootGroupRef.current &&
+        activeRm &&
         cameraRef.current
       ) {
         const subMode = modelMoveSubModeRef.current;
@@ -852,38 +1498,37 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
 
         if (isRotateAction) {
           const deltaX = e.clientX - dragStartClientX;
-          modelRootGroupRef.current.rotation.y = dragStartYaw + deltaX * 0.012;
+          activeRm.rootGroup.rotation.y = dragStartYaw + deltaX * 0.012;
         } else if (subMode === 'xy' && hasValidStartPlaneHit) {
-          forceRaycaster.setFromCamera(
+          raycaster.setFromCamera(
             new THREE.Vector2(pointerNdcRef.current.x, pointerNdcRef.current.y),
             cameraRef.current
           );
           const currentHit = new THREE.Vector3();
-          if (forceRaycaster.ray.intersectPlane(modelDragPlane, currentHit)) {
+          if (raycaster.ray.intersectPlane(modelDragPlane, currentHit)) {
             const offset = currentHit.sub(dragStartPlaneHit);
-            modelRootGroupRef.current.position.copy(dragStartModelPos).add(offset);
+            activeRm.rootGroup.position.copy(dragStartModelPos).add(offset);
           }
         } else if (subMode === 'xz') {
-          forceRaycaster.setFromCamera(
+          raycaster.setFromCamera(
             new THREE.Vector2(pointerNdcRef.current.x, pointerNdcRef.current.y),
             cameraRef.current
           );
           const currentHit = new THREE.Vector3();
           if (
             hasValidStartPlaneHit &&
-            Math.abs(forceRaycaster.ray.direction.y) > 0.16 &&
-            forceRaycaster.ray.intersectPlane(modelDragPlane, currentHit)
+            Math.abs(raycaster.ray.direction.y) > 0.16 &&
+            raycaster.ray.intersectPlane(modelDragPlane, currentHit)
           ) {
             const offset = currentHit.sub(dragStartPlaneHit);
-            if (offset.length() < 8.0) {
-              modelRootGroupRef.current.position.set(
+            if (offset.length() < 12.0) {
+              activeRm.rootGroup.position.set(
                 dragStartModelPos.x + offset.x,
                 dragStartModelPos.y,
                 dragStartModelPos.z + offset.z
               );
             }
           } else {
-            // Fallback screen-to-floor projection for shallow camera angles
             const dx = (e.clientX - dragStartClientX) * 0.0045;
             const dy = (e.clientY - dragStartClientY) * 0.0045;
             const camForward = new THREE.Vector3();
@@ -893,7 +1538,7 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
             else camForward.set(0, 0, -1);
             const camRight = new THREE.Vector3().crossVectors(camForward, new THREE.Vector3(0, 1, 0)).normalize();
 
-            modelRootGroupRef.current.position.set(
+            activeRm.rootGroup.position.set(
               dragStartModelPos.x + camRight.x * dx - camForward.x * dy,
               dragStartModelPos.y,
               dragStartModelPos.z + camRight.z * dx - camForward.z * dy
@@ -901,8 +1546,8 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
           }
         }
 
-        modelRootGroupRef.current.updateMatrixWorld(true);
-        syncModelTransformState();
+        activeRm.rootGroup.updateMatrixWorld(true);
+        syncModelTransformToState(activeRm);
       }
     };
 
@@ -932,23 +1577,24 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
     };
 
     const handleWheel = (e: WheelEvent) => {
+      const activeRm = runtimeModelsRef.current.get(activeModelIdRef.current);
       if (
         interactionModeRef.current === 'model' &&
         !isForceTestActiveRef.current &&
-        modelRootGroupRef.current
+        activeRm
       ) {
         e.preventDefault();
         const step = -Math.sign(e.deltaY) * 0.08;
         const subMode = modelMoveSubModeRef.current;
         if (subMode === 'rotate') {
-          modelRootGroupRef.current.rotation.y += step * 1.5;
+          activeRm.rootGroup.rotation.y += step * 1.5;
         } else if (subMode === 'xz') {
-          modelRootGroupRef.current.position.y += step;
+          activeRm.rootGroup.position.y += step;
         } else {
-          modelRootGroupRef.current.position.z += step;
+          activeRm.rootGroup.position.z += step;
         }
-        modelRootGroupRef.current.updateMatrixWorld(true);
-        syncModelTransformState();
+        activeRm.rootGroup.updateMatrixWorld(true);
+        syncModelTransformToState(activeRm);
       }
     };
 
@@ -960,12 +1606,35 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
     canvas.addEventListener('pointercancel', handlePointerUp);
     canvas.addEventListener('wheel', handleWheel, { passive: false });
 
-    // Blinking
-    let nextBlinkTime = 2.5;
-    let blinkTimer = 0;
-    let isBlinking = false;
+    // Load initial default model
+    const initialOutfit = WARDROBE_OUTFITS[0];
+    const initialUrl = `/api/vrm?file=${encodeURIComponent(initialOutfit.fileName)}`;
+    fetch(initialUrl)
+      .then((r) => (r.ok ? r.arrayBuffer() : fetch(initialOutfit.modelUrl).then((res) => res.arrayBuffer())))
+      .then((buf) => {
+        if (!isDisposed) {
+          const gltfLoader = new GLTFLoader();
+          gltfLoader.register((parser) => new VRMLoaderPlugin(parser));
+          gltfLoader.parse(buf, '', async (gltf) => {
+            const vrm = gltf.userData.vrm as VRM;
+            if (!vrm || isDisposed) return;
+            VRMUtils.removeUnnecessaryVertices(gltf.scene);
+            VRMUtils.combineSkeletons(gltf.scene);
+            try {
+              VRMUtils.rotateVRM0(vrm);
+            } catch {}
+            await instantiateVrmInstance('model-1', vrm, new THREE.Vector3(0, 0, 0), 0);
+            setIsLoading(false);
+          });
+        }
+      })
+      .catch(() => setIsLoading(false));
+
     const clock = new THREE.Clock();
 
+    // ----------------------------------------------------
+    // Unified Multi-Model Render Loop
+    // ----------------------------------------------------
     const animate = () => {
       if (isDisposed) return;
       rafId = requestAnimationFrame(animate);
@@ -975,24 +1644,27 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
         controls.update();
       }
 
-      if (mixerRef.current) {
-        mixerRef.current.update(delta);
-      }
+      // Collect all proxy colliders for raycasting
+      const allActiveColliders: THREE.Mesh[] = [];
 
-      if (vrmRef.current) {
-        if (modelRootGroupRef.current) {
-          modelRootGroupRef.current.updateMatrixWorld(true);
+      // Update all active models
+      runtimeModelsRef.current.forEach((rm, modelId) => {
+        if (!rm.rootGroup.visible) return;
+
+        allActiveColliders.push(...rm.proxyColliders);
+
+        // 1. Animation mixer update
+        if (rm.mixer) {
+          rm.mixer.update(delta);
         }
-        // Crucial: synchronize animated skeleton matrices so proxy colliders match the active pose
-        vrmRef.current.scene.updateMatrixWorld(true);
 
-        // ----------------------------------------------------
-        // 1. NATURAL "LOOK AT CAMERA" ANGLE CLAMPING
-        // Evaluates relative to character torso and slerps over active animations
-        // ----------------------------------------------------
-        if (lookAtCameraRef.current && vrmRef.current.humanoid && cameraRef.current) {
-          const head = vrmRef.current.humanoid.getNormalizedBoneNode('head');
-          const neck = vrmRef.current.humanoid.getNormalizedBoneNode('neck');
+        rm.rootGroup.updateMatrixWorld(true);
+        rm.vrm.scene.updateMatrixWorld(true);
+
+        // 2. Look at camera per model (relative to character head world coordinate)
+        if (lookAtCameraRef.current && rm.vrm.humanoid && cameraRef.current) {
+          const head = rm.vrm.humanoid.getNormalizedBoneNode('head');
+          const neck = rm.vrm.humanoid.getNormalizedBoneNode('neck');
 
           if (head) {
             const headWorldPos = new THREE.Vector3();
@@ -1000,15 +1672,12 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
 
             const toCamWorld = cameraRef.current.position.clone().sub(headWorldPos).normalize();
             const charQuat = new THREE.Quaternion();
-            vrmRef.current.scene.getWorldQuaternion(charQuat);
+            rm.vrm.scene.getWorldQuaternion(charQuat);
 
             const localDir = toCamWorld.applyQuaternion(charQuat.clone().invert()).normalize();
-
-            // Calculate yaw and pitch relative to character body (+Z forward, +Y up, +X right)
             const yaw = Math.atan2(localDir.x, localDir.z);
             const pitch = -Math.atan2(localDir.y, Math.hypot(localDir.x, localDir.z));
 
-            // Human limits: max natural yaw ~55deg; smoothly fade out if camera is behind (> 55deg to 85deg)
             const maxYaw = 55 * (Math.PI / 180);
             const fadeStartYaw = 55 * (Math.PI / 180);
             const cutoffYaw = 85 * (Math.PI / 180);
@@ -1025,7 +1694,6 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
               const clampedYaw = Math.max(-maxYaw, Math.min(maxYaw, yaw)) * influence;
               const clampedPitch = Math.max(-25 * (Math.PI / 180), Math.min(30 * (Math.PI / 180), pitch)) * influence;
 
-              // Smoothly blend head and neck towards camera direction over current animation pose
               const headTargetQuat = new THREE.Quaternion().setFromEuler(
                 new THREE.Euler(clampedPitch * 0.65, clampedYaw * 0.65, 0, 'YXZ')
               );
@@ -1041,165 +1709,25 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
           }
         }
 
-        // ----------------------------------------------------
-        // 2. ULTRA-FAST REAL-TIME FORCEFIELD & PRESSURE PHYSICS ("FORCE TEST")
-        // Uses bone proxy colliders for 0.01ms instantaneous raycasting (zero lag)
-        // Works dynamically even during active animations!
-        // ----------------------------------------------------
-        if (isForceTestActiveRef.current && cameraRef.current && proxyCollidersRef.current.length > 0) {
-          // Raycast only when pointer is active over canvas or down (eliminates all idle loop lag)
-          if (pointerInsideCanvasRef.current || isPointerDownRef.current) {
-            forceRaycaster.setFromCamera(
-              new THREE.Vector2(pointerNdcRef.current.x, pointerNdcRef.current.y),
-              cameraRef.current
-            );
+        // 3. VRM update (computes spring bones, secondary physics, blendshapes)
+        rm.vrm.update(delta);
 
-            // Fast raycast against proxy colliders only (eliminates lag from 50k skinned triangles)
-            const intersects = forceRaycaster.intersectObjects(proxyCollidersRef.current, false);
-            const hit = intersects[0];
-            const phys = forcePhysicsRef.current;
-
-            if (hit) {
-              phys.isContact = true;
-              phys.contactPoint.copy(hit.point);
-
-              // While touching/interacting with model, disable orbit controls so pointer acts directly on model
-              if (controlsRef.current) {
-                controlsRef.current.enabled = false;
-              }
-
-              // Position and show forcefield halo
-              if (forceIndicatorRef.current) {
-                forceIndicatorRef.current.position.copy(hit.point);
-                const normal = hit.face
-                  ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld)
-                  : new THREE.Vector3(0, 0, 1);
-                forceIndicatorRef.current.lookAt(hit.point.clone().add(normal));
-                forceIndicatorRef.current.visible = true;
-              }
-
-              // Pressure & holding depth accumulation
-              let pressure = 0.25;
-              if (isPointerDownRef.current) {
-                const holdSec = (performance.now() - pointerDownTimeRef.current) / 1000;
-                pressure = Math.min(1.0, 0.42 + holdSec * 1.5);
-              }
-              phys.pressure = pressure;
-
-              if (forceIndicatorRef.current) {
-                const s = 0.85 + pressure * 1.15;
-                forceIndicatorRef.current.scale.set(s, s, s);
-              }
-
-              const hitBone = hit.object.userData.boneNode as THREE.Object3D;
-              if (hitBone) {
-                phys.activeBone = hitBone;
-
-                // Push vector: ray direction pushes inward into the body
-                const pushDirWorld = forceRaycaster.ray.direction
-                  .clone()
-                  .multiplyScalar(0.045 + pressure * 0.09);
-
-                // Tangential dragging / rubbing friction effect
-                if (isPointerDownRef.current && prevHitPointRef.current) {
-                  const dragVector = hit.point.clone().sub(prevHitPointRef.current);
-                  pushDirWorld.add(dragVector.multiplyScalar(0.8));
-                }
-                prevHitPointRef.current = hit.point.clone();
-
-                // Convert push force into local coordinate space of bone parent
-                if (hitBone.parent) {
-                  const parentInvQuat = new THREE.Quaternion();
-                  hitBone.parent.getWorldQuaternion(parentInvQuat);
-                  parentInvQuat.invert();
-                  phys.targetOffset.copy(pushDirWorld.applyQuaternion(parentInvQuat));
-                } else {
-                  phys.targetOffset.copy(pushDirWorld);
-                }
-
-                // Reactive micro-expression (gentle blink or shy reaction on poke/press)
-                if (isPointerDownRef.current && vrmRef.current.expressionManager) {
-                  try {
-                    vrmRef.current.expressionManager.setValue('blink', Math.min(0.5, pressure * 0.6));
-                    if (pressure > 0.62) {
-                      vrmRef.current.expressionManager.setValue('surprised', 0.32);
-                    }
-                  } catch {}
-                }
-              }
-            } else {
-              phys.isContact = false;
-              phys.targetOffset.set(0, 0, 0);
-              prevHitPointRef.current = null;
-              if (forceIndicatorRef.current) {
-                forceIndicatorRef.current.visible = false;
-              }
-              if (controlsRef.current && !isPointerDownRef.current) {
-                controlsRef.current.enabled = interactionModeRef.current === 'camera';
-              }
-            }
+        // 4. Expressions & Visemes & Blinking
+        if (rm.vrm.expressionManager) {
+          // If this model is currently speaking or is the active model
+          const isThisSpeaking = subtitleState.isActive && subtitleState.speakerName === models.find((m) => m.id === modelId)?.name;
+          if (isThisSpeaking || modelId === activeModelIdRef.current) {
+            const visemes = lipSyncManager.getVisemes();
+            rm.vrm.expressionManager.setValue('aa', visemes.aa);
+            rm.vrm.expressionManager.setValue('ih', visemes.ih);
+            rm.vrm.expressionManager.setValue('ou', visemes.ou);
+            rm.vrm.expressionManager.setValue('ee', visemes.ee);
+            rm.vrm.expressionManager.setValue('oh', visemes.oh);
           }
 
-          // Spring-damper physics simulation for bone displacement and bouncy recoil
-          const phys = forcePhysicsRef.current;
-          if (phys.activeBone) {
-            const k = 160.0;
-            const damping = 15.0;
-            const force = phys.targetOffset.clone().sub(phys.currentOffset).multiplyScalar(k);
-            const damp = phys.velocity.clone().multiplyScalar(damping);
-            const accel = force.sub(damp);
-
-            phys.velocity.add(accel.multiplyScalar(delta));
-            phys.currentOffset.add(phys.velocity.clone().multiplyScalar(delta));
-            phys.activeBone.position.add(phys.currentOffset);
-
-            // Subtle posture tilt impulse so pushed bone visibly flexes and springs back
-            const tiltQuat = new THREE.Quaternion().setFromEuler(
-              new THREE.Euler(
-                -phys.currentOffset.z * 3.2,
-                phys.currentOffset.x * 2.5,
-                -phys.currentOffset.x * 2.0,
-                'YXZ'
-              )
-            );
-            phys.activeBone.quaternion.multiply(tiltQuat);
-
-            if (!phys.isContact && phys.currentOffset.lengthSq() < 0.00001 && phys.velocity.lengthSq() < 0.00001) {
-              phys.activeBone = null;
-            }
-          }
-        } else {
-          if (forceIndicatorRef.current && forceIndicatorRef.current.visible) {
-            forceIndicatorRef.current.visible = false;
-          }
-          if (controlsRef.current) {
-            const shouldEnableOrbit = interactionModeRef.current === 'camera';
-            if (controlsRef.current.enabled !== shouldEnableOrbit) {
-              controlsRef.current.enabled = shouldEnableOrbit;
-            }
-          }
-        }
-
-        // ----------------------------------------------------
-        // 3. VRM UPDATE - Propagates normalized bone rotations & procedural offsets to skeleton & SkinnedMeshes!
-        // ----------------------------------------------------
-        vrmRef.current.update(delta);
-
-        // ----------------------------------------------------
-        // 4. Update LipSync, Visemes & Facial Expressions
-        // ----------------------------------------------------
-        lipSyncManager.update(delta, clock.getElapsedTime());
-        const visemes = lipSyncManager.getVisemes();
-
-        if (vrmRef.current.expressionManager) {
-          vrmRef.current.expressionManager.setValue('aa', visemes.aa);
-          vrmRef.current.expressionManager.setValue('ih', visemes.ih);
-          vrmRef.current.expressionManager.setValue('ou', visemes.ou);
-          vrmRef.current.expressionManager.setValue('ee', visemes.ee);
-          vrmRef.current.expressionManager.setValue('oh', visemes.oh);
-
-          // Smoothly interpolate active emotion channels (Slot 2)
-          const activeEmo = ACT_EMOTIONS.find((e) => e.key === activeEmotionRef.current) || ACT_EMOTIONS[0];
+          // Active emotion for this model
+          const targetEmoKey = models.find((m) => m.id === modelId)?.activeEmotionKey || 'neutral';
+          const activeEmo = ACT_EMOTIONS.find((e) => e.key === targetEmoKey) || ACT_EMOTIONS[0];
           const targetBlends = activeEmo.blendValues || {};
 
           const emotionChannels = [
@@ -1209,39 +1737,152 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
 
           for (const channel of emotionChannels) {
             const targetVal = targetBlends[channel] || 0;
-            const currentVal = currentEmotionWeightsRef.current[channel] || 0;
+            const currentVal = rm.currentEmotionWeights[channel] || 0;
             const nextVal = currentVal + (targetVal - currentVal) * Math.min(1, delta * 7.5);
-            currentEmotionWeightsRef.current[channel] = nextVal;
+            rm.currentEmotionWeights[channel] = nextVal;
             try {
-              vrmRef.current.expressionManager.setValue(channel, nextVal);
+              rm.vrm.expressionManager.setValue(channel, nextVal);
             } catch {}
           }
 
-          // Direct setting of custom named blendshapes if present
           if (activeEmo.key !== 'neutral') {
             try {
-              vrmRef.current.expressionManager.setValue(activeEmo.key, 1.0);
+              rm.vrm.expressionManager.setValue(activeEmo.key, 1.0);
             } catch {}
           }
 
-          // Blinking
-          blinkTimer += delta;
-          if (blinkTimer > nextBlinkTime) {
-            isBlinking = true;
-            blinkTimer = 0;
-            nextBlinkTime = 2.0 + Math.random() * 3.5;
+          // Natural blinking per character
+          rm.blinkTimer += delta;
+          if (rm.blinkTimer > rm.nextBlinkTime) {
+            rm.isBlinking = true;
+            rm.blinkTimer = 0;
+            rm.nextBlinkTime = 2.0 + Math.random() * 3.5;
           }
 
-          if (isBlinking) {
-            const progress = blinkTimer / 0.18;
+          if (rm.isBlinking) {
+            const progress = rm.blinkTimer / 0.18;
             if (progress <= 0.5) {
-              vrmRef.current.expressionManager.setValue('blink', progress * 2);
+              rm.vrm.expressionManager.setValue('blink', progress * 2);
             } else if (progress <= 1.0) {
-              vrmRef.current.expressionManager.setValue('blink', (1.0 - progress) * 2);
+              rm.vrm.expressionManager.setValue('blink', (1.0 - progress) * 2);
             } else {
-              vrmRef.current.expressionManager.setValue('blink', 0);
-              isBlinking = false;
+              rm.vrm.expressionManager.setValue('blink', 0);
+              rm.isBlinking = false;
             }
+          }
+        }
+      });
+
+      // 5. Forcefield & Pressure Physics across models
+      if (isForceTestActiveRef.current && cameraRef.current && allActiveColliders.length > 0) {
+        if (pointerInsideCanvasRef.current || isPointerDownRef.current) {
+          raycaster.setFromCamera(
+            new THREE.Vector2(pointerNdcRef.current.x, pointerNdcRef.current.y),
+            cameraRef.current
+          );
+
+          const intersects = raycaster.intersectObjects(allActiveColliders, false);
+          const hit = intersects[0];
+          const phys = forcePhysicsRef.current;
+
+          if (hit) {
+            phys.isContact = true;
+            phys.contactPoint.copy(hit.point);
+
+            if (controlsRef.current) {
+              controlsRef.current.enabled = false;
+            }
+
+            if (forceIndicatorRef.current) {
+              forceIndicatorRef.current.position.copy(hit.point);
+              const normal = hit.face
+                ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld)
+                : new THREE.Vector3(0, 0, 1);
+              forceIndicatorRef.current.lookAt(hit.point.clone().add(normal));
+              forceIndicatorRef.current.visible = true;
+            }
+
+            let pressure = 0.25;
+            if (isPointerDownRef.current) {
+              const holdSec = (performance.now() - pointerDownTimeRef.current) / 1000;
+              pressure = Math.min(1.0, 0.42 + holdSec * 1.5);
+            }
+            phys.pressure = pressure;
+
+            if (forceIndicatorRef.current) {
+              const s = 0.85 + pressure * 1.15;
+              forceIndicatorRef.current.scale.set(s, s, s);
+            }
+
+            const hitBone = hit.object.userData.boneNode as THREE.Object3D;
+            const hitModelId = hit.object.userData.modelId as string;
+            const targetRm = runtimeModelsRef.current.get(hitModelId);
+
+            if (hitBone) {
+              phys.activeBone = hitBone;
+              const pushDirWorld = raycaster.ray.direction
+                .clone()
+                .multiplyScalar(0.045 + pressure * 0.09);
+
+              if (isPointerDownRef.current && prevHitPointRef.current) {
+                const dragVector = hit.point.clone().sub(prevHitPointRef.current);
+                pushDirWorld.add(dragVector.multiplyScalar(0.8));
+              }
+              prevHitPointRef.current = hit.point.clone();
+
+              if (hitBone.parent) {
+                const parentInvQuat = new THREE.Quaternion();
+                hitBone.parent.getWorldQuaternion(parentInvQuat);
+                parentInvQuat.invert();
+                phys.targetOffset.copy(pushDirWorld.applyQuaternion(parentInvQuat));
+              } else {
+                phys.targetOffset.copy(pushDirWorld);
+              }
+
+              if (isPointerDownRef.current && targetRm?.vrm.expressionManager) {
+                try {
+                  targetRm.vrm.expressionManager.setValue('blink', Math.min(0.5, pressure * 0.6));
+                  if (pressure > 0.62) {
+                    targetRm.vrm.expressionManager.setValue('surprised', 0.32);
+                  }
+                } catch {}
+              }
+            }
+          } else {
+            phys.isContact = false;
+            phys.targetOffset.set(0, 0, 0);
+            prevHitPointRef.current = null;
+            if (forceIndicatorRef.current) forceIndicatorRef.current.visible = false;
+            if (controlsRef.current && !isPointerDownRef.current) {
+              controlsRef.current.enabled = interactionModeRef.current === 'camera';
+            }
+          }
+        }
+
+        const phys = forcePhysicsRef.current;
+        if (phys.activeBone) {
+          const k = 160.0;
+          const damping = 15.0;
+          const force = phys.targetOffset.clone().sub(phys.currentOffset).multiplyScalar(k);
+          const damp = phys.velocity.clone().multiplyScalar(damping);
+          const accel = force.sub(damp);
+
+          phys.velocity.add(accel.multiplyScalar(delta));
+          phys.currentOffset.add(phys.velocity.clone().multiplyScalar(delta));
+          phys.activeBone.position.add(phys.currentOffset);
+
+          const tiltQuat = new THREE.Quaternion().setFromEuler(
+            new THREE.Euler(
+              -phys.currentOffset.z * 3.2,
+              phys.currentOffset.x * 2.5,
+              -phys.currentOffset.x * 2.0,
+              'YXZ'
+            )
+          );
+          phys.activeBone.quaternion.multiply(tiltQuat);
+
+          if (!phys.isContact && phys.currentOffset.lengthSq() < 0.00001 && phys.velocity.lengthSq() < 0.00001) {
+            phys.activeBone = null;
           }
         }
       }
@@ -1273,378 +1914,19 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
       canvas.removeEventListener('wheel', handleWheel);
       controls.dispose();
       renderer.dispose();
+      runtimeModelsRef.current.forEach((rm) => {
+        VRMUtils.deepDispose(rm.vrm.scene);
+      });
+      runtimeModelsRef.current.clear();
     };
   }, []);
 
-  // ----------------------------------------------------
-  // Load VRM Model
-  // ----------------------------------------------------
-  useEffect(() => {
-    const scene = sceneRef.current;
-    if (!scene) return;
-
-    let isDisposed = false;
-    setIsLoading(true);
-
-    if (vrmRef.current) {
-      if (vrmRef.current.scene.parent) {
-        vrmRef.current.scene.parent.remove(vrmRef.current.scene);
-      } else {
-        scene.remove(vrmRef.current.scene);
-      }
-      VRMUtils.deepDispose(vrmRef.current.scene);
-      vrmRef.current = null;
-    }
-
-    actionsMapRef.current.clear();
-    loadingAnimPromisesRef.current.clear();
-    currentActionRef.current = null;
-
-    const gltfLoader = new GLTFLoader();
-    gltfLoader.register((parser) => new VRMLoaderPlugin(parser));
-
-    const onModelLoaded = async (gltf: any) => {
-      if (isDisposed) return;
-      const vrm = gltf.userData.vrm as VRM;
-      if (!vrm) {
-        setIsLoading(false);
-        return;
-      }
-
-      VRMUtils.removeUnnecessaryVertices(gltf.scene);
-      VRMUtils.combineSkeletons(gltf.scene);
-      try {
-        VRMUtils.rotateVRM0(vrm);
-      } catch {}
-
-      vrm.scene.position.set(0, VRM_CONFIG.interaction.bodyOffsetY, 0);
-      vrm.scene.rotation.set(0, 0, 0);
-      vrm.scene.traverse((obj) => {
-        obj.frustumCulled = false;
-      });
-
-      vrmRef.current = vrm;
-      if (modelRootGroupRef.current) {
-        modelRootGroupRef.current.add(vrm.scene);
-      } else {
-        scene.add(vrm.scene);
-      }
-
-      // Build lightweight proxy colliders on humanoid bones for ultra-fast (0.01ms) raycasting & animated hit tracking
-      proxyCollidersRef.current = [];
-      if (vrm.humanoid) {
-        const colliderDefs: Array<{
-          boneName: string;
-          geo: THREE.BufferGeometry;
-          offset?: [number, number, number];
-        }> = [
-          { boneName: 'head', geo: new THREE.SphereGeometry(0.14, 8, 8), offset: [0, 0.08, 0] },
-          { boneName: 'neck', geo: new THREE.SphereGeometry(0.08, 8, 8), offset: [0, 0.04, 0] },
-          { boneName: 'chest', geo: new THREE.BoxGeometry(0.26, 0.22, 0.18), offset: [0, 0.06, 0] },
-          { boneName: 'spine', geo: new THREE.SphereGeometry(0.15, 8, 8) },
-          { boneName: 'hips', geo: new THREE.SphereGeometry(0.2, 8, 8), offset: [0, -0.04, 0] },
-          { boneName: 'leftUpperArm', geo: new THREE.CylinderGeometry(0.06, 0.06, 0.22, 6), offset: [0, -0.1, 0] },
-          { boneName: 'rightUpperArm', geo: new THREE.CylinderGeometry(0.06, 0.06, 0.22, 6), offset: [0, -0.1, 0] },
-          { boneName: 'leftLowerArm', geo: new THREE.CylinderGeometry(0.05, 0.05, 0.22, 6), offset: [0, -0.1, 0] },
-          { boneName: 'rightLowerArm', geo: new THREE.CylinderGeometry(0.05, 0.05, 0.22, 6), offset: [0, -0.1, 0] },
-          { boneName: 'leftUpperLeg', geo: new THREE.CylinderGeometry(0.08, 0.08, 0.32, 6), offset: [0, -0.15, 0] },
-          { boneName: 'rightUpperLeg', geo: new THREE.CylinderGeometry(0.08, 0.08, 0.32, 6), offset: [0, -0.15, 0] },
-          { boneName: 'leftLowerLeg', geo: new THREE.CylinderGeometry(0.07, 0.07, 0.32, 6), offset: [0, -0.15, 0] },
-          { boneName: 'rightLowerLeg', geo: new THREE.CylinderGeometry(0.07, 0.07, 0.32, 6), offset: [0, -0.15, 0] },
-        ];
-
-        const proxyMat = new THREE.MeshBasicMaterial({
-          transparent: true,
-          opacity: 0.0,
-          depthWrite: false,
-        });
-
-        for (const def of colliderDefs) {
-          const boneNode = vrm.humanoid.getNormalizedBoneNode(def.boneName as any);
-          if (boneNode) {
-            const mesh = new THREE.Mesh(def.geo, proxyMat);
-            mesh.visible = true;
-            if (def.offset) {
-              mesh.position.set(def.offset[0], def.offset[1], def.offset[2]);
-            }
-            mesh.userData = { boneName: def.boneName, boneNode };
-            boneNode.add(mesh);
-            proxyCollidersRef.current.push(mesh);
-          }
-        }
-      }
-
-      const mixer = new THREE.AnimationMixer(vrm.scene);
-      mixerRef.current = mixer;
-
-      // Load default Idle animation immediately so the stage is ready right away
-      const idleAction = await ensureAnimationAction('idle');
-      if (idleAction && !isDisposed) {
-        idleAction.play();
-        currentActionRef.current = idleAction;
-        setActiveAnimKey('idle');
-      }
-
-      if (!isDisposed) {
-        setIsLoading(false);
-      }
-
-      // Pre-warm core initial cue animations in the background
-      const priorityKeys = ['wave', 'wait', 'yawn', 'walk', 'armstretch', 'feelingshy', 'idle_nailcheck'];
-      for (const key of priorityKeys) {
-        if (isDisposed) break;
-        ensureAnimationAction(key).catch(() => {});
-      }
-    };
-
-    if (customVrmBuffer) {
-      gltfLoader.parse(customVrmBuffer, '', onModelLoaded);
-    } else {
-      const outfit = WARDROBE_OUTFITS.find((o) => o.id === selectedOutfitId) || WARDROBE_OUTFITS[0];
-      const modelUrl = `/api/vrm?file=${encodeURIComponent(outfit.fileName)}`;
-
-      fetch(modelUrl)
-        .then((r) => (r.ok ? r.arrayBuffer() : fetch(outfit.modelUrl).then((res) => res.arrayBuffer())))
-        .then((buf) => {
-          if (!isDisposed) gltfLoader.parse(buf, '', onModelLoaded);
-        })
-        .catch(() => setIsLoading(false));
-    }
-
-    return () => {
-      isDisposed = true;
-    };
-  }, [selectedOutfitId, customVrmBuffer, ensureAnimationAction]);
-
-  // Upload Custom FBX
-  const handleFbxUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !vrmRef.current || !mixerRef.current) return;
-    try {
-      const arrayBuffer = await file.arrayBuffer();
-      const fbxLoader = new FBXLoader();
-      const fbxGroup = fbxLoader.parse(arrayBuffer, '');
-      const rawClip = retargetAnimation(fbxGroup, vrmRef.current);
-      if (rawClip) {
-        const clip = localizeAnimationClip(rawClip);
-        const key = `custom_${Date.now()}`;
-        const name = file.name.replace(/\.fbx$/i, '');
-        const action = mixerRef.current.clipAction(clip);
-        action.setLoop(THREE.LoopRepeat, Infinity);
-        action.clampWhenFinished = false;
-        actionsMapRef.current.set(key, action);
-
-        const newItem: AnimationItem = {
-          key,
-          name,
-          fileName: file.name,
-          category: 'custom',
-          isCustom: true,
-          clip,
-        };
-        setAnimations((prev) => [...prev, newItem]);
-        animationsRef.current = [...animationsRef.current, newItem];
-        playAnimationByKey(key, 0.35, true);
-      }
-    } catch (err) {
-      console.error('FBX upload error:', err);
-    } finally {
-      e.target.value = '';
-    }
-  };
-
-  // Upload Custom VRM
-  const handleVrmUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      const buf = await file.arrayBuffer();
-      setCustomVrmName(file.name);
-      setCustomVrmBuffer(buf);
-    } catch (err) {
-      console.error('VRM upload error:', err);
-    }
-  };
-
-  // Remote Fetcher: Fetch VRM Model Directly from Remote URL
-  const handleFetchRemoteModel = async () => {
-    const version = remoteModelVersion.trim() || '1.2';
-    const outfit = remoteModelOutfit.trim();
-    const fileName = outfit ? `hana_v${version}_${outfit}_vrm1.vrm` : `hana_v${version}_vrm1.vrm`;
-
-    setIsFetchingRemoteModel(true);
-    setRemoteStatusMessage(`Fetching ${fileName}...`);
-
-    const candidateUrls = [
-      `/api/vrm?file=${encodeURIComponent(fileName)}`,
-      `https://muxai.vercel.app/${fileName}`,
-      `https://ai.mux8.com/${fileName}`,
-    ];
-
-    let buffer: ArrayBuffer | null = null;
-    for (const url of candidateUrls) {
-      try {
-        const resp = await fetch(url);
-        if (resp.ok) {
-          const buf = await resp.arrayBuffer();
-          if (buf && buf.byteLength > 1000) {
-            buffer = buf;
-            break;
-          }
-        }
-      } catch {
-        // try next candidate
-      }
-    }
-
-    if (buffer) {
-      setCustomVrmName(fileName);
-      setCustomVrmBuffer(buffer);
-      setRemoteStatusMessage(`Successfully loaded ${fileName}`);
-    } else {
-      setRemoteStatusMessage(`Unable to fetch ${fileName} from remote sources.`);
-    }
-    setIsFetchingRemoteModel(false);
-    setTimeout(() => setRemoteStatusMessage(null), 4000);
-  };
-
-  // Remote Fetcher: Fetch Mixamo Animation (.fbx) from Remote URL
-  const handleFetchRemoteAnimation = async () => {
-    const animName = remoteAnimName.trim() || 'dance';
-    const fileName = `mixamo_${animName}.fbx`;
-
-    if (!vrmRef.current || !mixerRef.current) {
-      setRemoteStatusMessage('No character model active to apply animation to.');
-      return;
-    }
-
-    setIsFetchingRemoteAnim(true);
-    setRemoteStatusMessage(`Fetching ${fileName}...`);
-
-    const candidateUrls = [
-      `/api/animation/${animName}`,
-      `https://muxai.vercel.app/${fileName}`,
-      `https://ai.mux8.com/${fileName}`,
-    ];
-
-    let buffer: ArrayBuffer | null = null;
-    for (const url of candidateUrls) {
-      try {
-        const resp = await fetch(url);
-        if (resp.ok) {
-          const buf = await resp.arrayBuffer();
-          if (buf && buf.byteLength > 1000) {
-            buffer = buf;
-            break;
-          }
-        }
-      } catch {
-        // try next candidate
-      }
-    }
-
-    if (buffer) {
-      try {
-        const fbxLoader = new FBXLoader();
-        const fbxGroup = fbxLoader.parse(buffer, '');
-        const rawClip = retargetAnimation(fbxGroup, vrmRef.current);
-        if (rawClip) {
-          const clip = localizeAnimationClip(rawClip);
-          const key = `remote_${animName}_${Date.now()}`;
-          const action = mixerRef.current.clipAction(clip);
-          action.setLoop(THREE.LoopRepeat, Infinity);
-          action.clampWhenFinished = false;
-          actionsMapRef.current.set(key, action);
-
-          const newItem: AnimationItem = {
-            key,
-            name: `Remote: ${animName}`,
-            fileName,
-            category: 'custom',
-            isCustom: true,
-            clip,
-          };
-          setAnimations((prev) => [...prev, newItem]);
-          animationsRef.current = [...animationsRef.current, newItem];
-          await playAnimationByKey(key, 0.35, true);
-          setRemoteStatusMessage(`Playing ${fileName} in loop`);
-        } else {
-          setRemoteStatusMessage(`Failed to retarget animation from ${fileName}`);
-        }
-      } catch (err) {
-        console.error(err);
-        setRemoteStatusMessage(`Failed to parse FBX animation from ${fileName}`);
-      }
-    } else {
-      setRemoteStatusMessage(`Unable to fetch ${fileName} from remote sources.`);
-    }
-
-    setIsFetchingRemoteAnim(false);
-    setTimeout(() => setRemoteStatusMessage(null), 4000);
-  };
-
-  // Timeline Step Operations
-  const handleAddStep = () => {
-    const newCue: TimelineCue = {
-      id: `cue_${Date.now()}`,
-      name: `Step ${cues.length + 1}`,
-      text: '',
-      animationKey: 'idle',
-      emotionKey: 'happy',
-      durationSec: 3.5,
-    };
-    setCues((prev) => [...prev, newCue]);
-  };
-
-  const handleDeleteStep = (id: string) => {
-    setCues((prev) => prev.filter((c) => c.id !== id));
-  };
-
-  const handleUpdateStep = (id: string, updates: Partial<TimelineCue>) => {
-    setCues((prev) => prev.map((c) => (c.id === id ? { ...c, ...updates } : c)));
-  };
-
-  const openAnimationModalForCue = (cueId: string | null) => {
-    setAnimModalTargetCueId(cueId);
-    setAnimSearchQuery('');
-    setIsAnimModalOpen(true);
-  };
-
-  const filteredModalAnimations = useMemo(() => {
-    const q = animSearchQuery.trim().toLowerCase();
-    return animations.filter((anim) => {
-      if (animCategoryFilter !== 'all') {
-        const cat = anim.isCustom ? 'custom' : anim.category || 'standby';
-        if (cat !== animCategoryFilter) return false;
-      }
-      if (!q) return true;
-      return (
-        anim.name.toLowerCase().includes(q) ||
-        anim.key.toLowerCase().includes(q) ||
-        (anim.fileName || '').toLowerCase().includes(q)
-      );
-    });
-  }, [animations, animSearchQuery, animCategoryFilter]);
-
-  const targetCueIndex = useMemo(() => {
-    if (!animModalTargetCueId) return null;
-    const idx = cues.findIndex((c) => c.id === animModalTargetCueId);
-    return idx >= 0 ? idx : null;
-  }, [animModalTargetCueId, cues]);
-
-  const currentSelectedModalAnimKey = useMemo(() => {
-    if (animModalTargetCueId) {
-      const cue = cues.find((c) => c.id === animModalTargetCueId);
-      return cue?.animationKey || 'idle';
-    }
-    return activeAnimKey;
-  }, [animModalTargetCueId, cues, activeAnimKey]);
-
   const hasModelOffset =
-    Math.abs(modelTransformDisplay.x) > 0.01 ||
-    Math.abs(modelTransformDisplay.y) > 0.01 ||
-    Math.abs(modelTransformDisplay.z) > 0.01 ||
-    Math.abs(modelTransformDisplay.yawDeg) > 0;
+    activeModel &&
+    (Math.abs(activeModel.transform.x) > 0.01 ||
+      Math.abs(activeModel.transform.y) > 0.01 ||
+      Math.abs(activeModel.transform.z) > 0.01 ||
+      Math.abs(activeModel.transform.yawDeg) > 0);
 
   return (
     <div className="relative h-screen w-screen overflow-hidden select-none bg-[#f0f2f5] dark:bg-[#0f1117] text-neutral-800 dark:text-neutral-100 font-sans">
@@ -1664,7 +1946,7 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
       {isLoading && (
         <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-black/40 backdrop-blur-xs text-white">
           <div className="w-8 h-8 rounded-full border-2 border-[var(--theme-accent,#55d2f6)] border-t-transparent animate-spin mb-2" />
-          <span className="text-xs font-mono font-medium">Loading 3D Actor...</span>
+          <span className="text-xs font-mono font-medium">Loading 3D Actors...</span>
         </div>
       )}
 
@@ -1693,7 +1975,7 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
                 ? 'bg-[var(--theme-accent,#55d2f6)] text-neutral-950 shadow-xs font-bold'
                 : 'text-neutral-600 dark:text-neutral-300 hover:bg-black/5 dark:hover:bg-white/5'
             }`}
-            title="Grab and move the 3D model directly (animations play in local space)"
+            title="Grab and move the active 3D model directly (animations play in local space)"
           >
             <Move className="w-3.5 h-3.5" />
             <span>Model Move</span>
@@ -1731,9 +2013,9 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
           {hasModelOffset && (
             <button
               type="button"
-              onClick={handleResetModelTransform}
+              onClick={handleResetActiveModelTransform}
               className="px-2 py-1 rounded-lg bg-neutral-100 dark:bg-white/10 hover:bg-neutral-200 dark:hover:bg-white/15 text-[11px] font-mono font-semibold text-neutral-700 dark:text-neutral-200 flex items-center gap-1 cursor-pointer transition-all"
-              title="Reset model position & rotation to stage center (0, 0, 0)"
+              title="Reset active model position & rotation"
             >
               <RotateCcw className="w-3 h-3" />
               <span className="hidden sm:inline">Reset</span>
@@ -1741,30 +2023,32 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
           )}
         </div>
 
-        {interactionMode === 'model' && (
+        {interactionMode === 'model' && activeModel && (
           <div className="px-2.5 py-1 rounded-xl backdrop-blur-md bg-white/80 dark:bg-[#13151f]/80 border border-black/10 dark:border-white/10 text-[10px] font-mono text-neutral-600 dark:text-neutral-300 flex items-center gap-2 shadow-sm">
-            <span className="text-sky-600 dark:text-sky-400 font-semibold">Local Space Active</span>
-            <span>&bull;</span>
-            <span>
-              Pos: ({modelTransformDisplay.x}, {modelTransformDisplay.y}, {modelTransformDisplay.z})
+            <span className="text-sky-600 dark:text-sky-400 font-semibold truncate max-w-[140px]">
+              Active: {activeModel.name}
             </span>
             <span>&bull;</span>
-            <span>Yaw: {modelTransformDisplay.yawDeg}&deg;</span>
+            <span>
+              Pos: ({activeModel.transform.x}, {activeModel.transform.y}, {activeModel.transform.z})
+            </span>
+            <span>&bull;</span>
+            <span>Yaw: {activeModel.transform.yawDeg}&deg;</span>
           </div>
         )}
       </div>
 
-      {/* Top Left Floating Control Rail (Directly styled after muxai-3d-preview.html) */}
+      {/* Top Left Floating Control Rail (Stage, Motions, Emotions, Inputs) */}
       <div
-        className={`absolute top-4 left-4 z-20 backdrop-blur-md rounded-2xl border border-black/10 dark:border-white/10 shadow-xl transition-all duration-200 overflow-hidden bg-white/85 dark:bg-[#13151f]/85 ${
-          isRailExpanded ? 'w-72 sm:w-80 p-3' : 'w-12 p-1.5'
+        className={`absolute top-4 left-4 z-30 backdrop-blur-md rounded-2xl border border-black/10 dark:border-white/10 shadow-xl transition-all duration-200 pointer-events-auto bg-white/85 dark:bg-[#13151f]/85 ${
+          isRailExpanded ? 'w-72 sm:w-80 p-3 max-h-[calc(100vh-2rem)] overflow-y-auto' : 'w-12 p-1.5'
         }`}
       >
         {/* Rail Header */}
         <div className="flex items-center justify-between min-h-[36px]">
           <div className="flex items-center gap-2.5 min-w-0">
             <button
-              onClick={handleToggleRail}
+              onClick={() => setIsRailExpanded((p) => !p)}
               className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 shadow-xs cursor-pointer overflow-hidden p-0 border border-black/10 dark:border-white/10 transition-transform active:scale-95"
               style={{ backgroundColor: 'var(--theme-accent, #55d2f6)' }}
               title={isRailExpanded ? 'Fold panel' : 'Unfold panel'}
@@ -1790,22 +2074,11 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
 
           {isRailExpanded && (
             <div className="flex items-center gap-1">
-              {onBackToChat && (
-                <button
-                  type="button"
-                  onClick={onBackToChat}
-                  className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-700 dark:hover:text-white text-xs font-medium cursor-pointer transition-colors"
-                  title="Return to /chat"
-                >
-                  <ArrowLeft className="w-3.5 h-3.5" />
-                </button>
-              )}
               <button
                 type="button"
-                onClick={handleCollapseRail}
+                onClick={() => setIsRailExpanded(false)}
                 className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-700 dark:hover:text-white text-xs font-medium cursor-pointer transition-colors"
                 title="Fold up panel"
-                aria-label="Fold up panel"
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
@@ -1816,22 +2089,21 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
         {/* Expanded Rail Content */}
         {isRailExpanded && (
           <div className="mt-3 space-y-3 text-xs">
-            {/* Status Box with Green Dot (Direct reference to muxai-3d-preview.html) */}
-            <div className="flex items-center gap-2 p-2 rounded-xl bg-black/[0.03] dark:bg-white/[0.04] border border-black/5 dark:border-white/5 text-[11px] text-neutral-600 dark:text-neutral-300">
-              {loadingAnimKey ? (
-                <Loader2 className="w-3 h-3 text-[var(--theme-accent,#55d2f6)] animate-spin shrink-0" />
-              ) : (
-                <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-              )}
-              <div className="truncate flex items-center gap-1.5 min-w-0">
+            {/* Active Model Indicator */}
+            <div className="flex items-center justify-between p-2 rounded-xl bg-black/[0.03] dark:bg-white/[0.04] border border-black/5 dark:border-white/5 text-[11px] text-neutral-600 dark:text-neutral-300">
+              <div className="flex items-center gap-2 truncate min-w-0">
+                {loadingAnimKey ? (
+                  <Loader2 className="w-3 h-3 text-[var(--theme-accent,#55d2f6)] animate-spin shrink-0" />
+                ) : (
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                )}
                 <span className="truncate">
-                  Motion: <strong>{animations.find((a) => a.key === activeAnimKey)?.name || activeAnimKey}</strong>
-                </span>
-                <span className="opacity-40">&bull;</span>
-                <span className="truncate">
-                  Emotion: <strong>{ACT_EMOTIONS.find((e) => e.key === activeEmotionKey)?.name || activeEmotionKey}</strong>
+                  Actor: <strong className="text-neutral-900 dark:text-white">{activeModel?.name || 'None'}</strong>
                 </span>
               </div>
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[var(--theme-accent-soft,rgba(85,210,246,0.15))] text-[var(--theme-accent,#55d2f6)] font-bold shrink-0">
+                {models.length} Model{models.length > 1 ? 's' : ''}
+              </span>
             </div>
 
             {/* Viewport Interaction Mode Selector in Control Rail */}
@@ -1843,7 +2115,7 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
                 {hasModelOffset && (
                   <button
                     type="button"
-                    onClick={handleResetModelTransform}
+                    onClick={handleResetActiveModelTransform}
                     className="text-[10px] font-mono text-[var(--theme-accent,#55d2f6)] hover:underline flex items-center gap-1 cursor-pointer"
                   >
                     <RotateCcw className="w-2.5 h-2.5" />
@@ -1883,7 +2155,7 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
                 <span className="text-[10px] font-mono uppercase tracking-wider text-neutral-400 font-semibold">
-                  Quick Motions
+                  Quick Motions (Active)
                 </span>
                 <button
                   type="button"
@@ -1900,7 +2172,7 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
                     key={anim.key}
                     onClick={() => handleToggleOrPlayAnimation(anim.key)}
                     className={`py-1.5 px-2 rounded-xl font-medium text-[11px] truncate border transition-all cursor-pointer ${
-                      activeAnimKey === anim.key
+                      activeModel?.activeAnimKey === anim.key
                         ? 'border-[var(--theme-accent,#55d2f6)] bg-[var(--theme-accent-soft,rgba(85,210,246,0.15))] text-[var(--theme-accent,#55d2f6)] font-bold'
                         : 'border-black/5 dark:border-white/10 hover:bg-black/5 dark:hover:bg-white/5 text-neutral-700 dark:text-neutral-300'
                     }`}
@@ -1927,15 +2199,15 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
             {/* Quick VRM Emotion Buttons */}
             <div>
               <span className="text-[10px] font-mono uppercase tracking-wider text-neutral-400 font-semibold block mb-1.5">
-                Quick Emotions
+                Quick Emotions (Active)
               </span>
               <div className="grid grid-cols-3 gap-1.5">
                 {ACT_EMOTIONS.slice(0, 6).map((emo) => (
                   <button
                     key={emo.key}
-                    onClick={() => applyEmotionByKey(emo.key)}
+                    onClick={() => applyEmotionForModel(activeModelId, emo.key)}
                     className={`py-1.5 px-1.5 rounded-xl font-medium text-[11px] truncate border transition-all cursor-pointer ${
-                      activeEmotionKey === emo.key
+                      activeModel?.activeEmotionKey === emo.key
                         ? 'border-rose-400 bg-rose-500/15 text-rose-500 dark:text-rose-400 font-bold'
                         : 'border-black/5 dark:border-white/10 hover:bg-black/5 dark:hover:bg-white/5 text-neutral-700 dark:text-neutral-300'
                     }`}
@@ -1947,19 +2219,29 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
               </div>
             </div>
 
-            {/* Upload Buttons Row */}
-            <div className="grid grid-cols-2 gap-2 pt-1 border-t border-black/5 dark:border-white/5">
-              <label className="py-2 px-2.5 rounded-xl border border-dashed border-black/15 dark:border-white/15 hover:border-[var(--theme-accent,#55d2f6)] flex items-center justify-center gap-1.5 text-[11px] font-semibold text-neutral-600 dark:text-neutral-300 cursor-pointer transition-all">
-                <Upload className="w-3.5 h-3.5 text-[var(--theme-accent,#55d2f6)]" />
-                <span>Upload FBX</span>
+            {/* Upload & Add Actor Buttons Row */}
+            <div className="grid grid-cols-3 gap-1.5 pt-1 border-t border-black/5 dark:border-white/5">
+              <label className="py-2 px-1 rounded-xl border border-dashed border-black/15 dark:border-white/15 hover:border-[var(--theme-accent,#55d2f6)] flex items-center justify-center gap-1 text-[10px] font-semibold text-neutral-600 dark:text-neutral-300 cursor-pointer transition-all" title="Upload FBX animation">
+                <Upload className="w-3 h-3 text-[var(--theme-accent,#55d2f6)]" />
+                <span>+ FBX</span>
                 <input type="file" accept=".fbx" onChange={handleFbxUpload} className="hidden" />
               </label>
 
-              <label className="py-2 px-2.5 rounded-xl border border-dashed border-black/15 dark:border-white/15 hover:border-[var(--theme-accent,#55d2f6)] flex items-center justify-center gap-1.5 text-[11px] font-semibold text-neutral-600 dark:text-neutral-300 cursor-pointer transition-all">
-                <Box className="w-3.5 h-3.5 text-[var(--theme-accent,#55d2f6)]" />
-                <span>Upload VRM</span>
+              <label className="py-2 px-1 rounded-xl border border-dashed border-black/15 dark:border-white/15 hover:border-[var(--theme-accent,#55d2f6)] flex items-center justify-center gap-1 text-[10px] font-semibold text-neutral-600 dark:text-neutral-300 cursor-pointer transition-all" title="Upload VRM to add a new model to stage">
+                <Box className="w-3 h-3 text-[var(--theme-accent,#55d2f6)]" />
+                <span>+ VRM</span>
                 <input type="file" accept=".vrm" onChange={handleVrmUpload} className="hidden" />
               </label>
+
+              <button
+                type="button"
+                onClick={() => setIsAddOutfitModalOpen(true)}
+                className="py-2 px-1 rounded-xl border border-black/10 dark:border-white/10 bg-black/[0.03] dark:bg-white/[0.04] hover:bg-black/[0.07] dark:hover:bg-white/[0.08] text-[10px] font-semibold text-neutral-700 dark:text-neutral-300 flex items-center justify-center gap-1 transition-all cursor-pointer"
+                title="Add actor from wardrobe outfits"
+              >
+                <UserPlus className="w-3 h-3 text-[var(--theme-accent,#55d2f6)]" />
+                <span>+ Outfit</span>
+              </button>
             </div>
 
             {/* Big Script Editor Button */}
@@ -1979,7 +2261,7 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
               </span>
             </button>
 
-            {/* Force Test Button (enable/disable) below Script Editor */}
+            {/* Force Test Button */}
             <button
               type="button"
               onClick={() => setIsForceTestActive((prev) => !prev)}
@@ -1996,7 +2278,7 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
               </span>
             </button>
 
-            {/* Current Checkmark Options Row: Show Subtitles & Autoplay on close */}
+            {/* Checkmark Options Row */}
             <div className="flex items-center gap-3 pt-1 px-1 flex-wrap">
               <label className="flex items-center gap-1.5 cursor-pointer select-none">
                 <input
@@ -2023,7 +2305,6 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
               </label>
             </div>
 
-            {/* Below the current row: Checkmark for "Look at camera" and "Use remote fetcher" */}
             <div className="flex items-center gap-3 pt-0.5 px-1 flex-wrap">
               <label className="flex items-center gap-1.5 cursor-pointer select-none">
                 <input
@@ -2050,7 +2331,7 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
               </label>
             </div>
 
-            {/* Remote Fetcher UI Panel (when Use remote fetcher is enabled) */}
+            {/* Remote Fetcher UI Panel */}
             {useRemoteFetcher && (
               <div className="p-2.5 rounded-xl border border-black/10 dark:border-white/10 bg-black/[0.02] dark:bg-white/[0.03] space-y-2.5">
                 {remoteStatusMessage && (
@@ -2059,10 +2340,10 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
                   </div>
                 )}
 
-                {/* Model Remote Fetcher: "hana_v" [] "_" [] "_vrm1.vrm" */}
+                {/* Model Remote Fetcher -> Adds as New Model */}
                 <div className="space-y-1.5">
                   <span className="text-[10px] font-mono uppercase tracking-wider text-neutral-400 font-semibold block">
-                    Remote Model
+                    Remote Model (+ New Model)
                   </span>
                   <div className="flex items-center gap-1 bg-black/[0.04] dark:bg-white/[0.05] p-1.5 rounded-lg text-xs font-mono border border-black/5 dark:border-white/5">
                     <span className="text-neutral-500 font-semibold shrink-0 select-none">hana_v</span>
@@ -2081,7 +2362,7 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
                       onChange={(e) => setRemoteModelOutfit(e.target.value)}
                       placeholder="pinkmaid"
                       className="flex-1 min-w-0 bg-white dark:bg-black/40 border border-black/15 dark:border-white/15 rounded px-1.5 py-0.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-[var(--theme-accent,#55d2f6)] text-neutral-900 dark:text-white"
-                      title="Outfit code (optional, e.g. pinkmaid, redhoodie, or leave blank for default)"
+                      title="Outfit code"
                     />
                     <span className="text-neutral-500 font-semibold shrink-0 select-none">_vrm1.vrm</span>
                   </div>
@@ -2099,17 +2380,17 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
                       </>
                     ) : (
                       <>
-                        <Box className="w-3.5 h-3.5" />
-                        <span>Fetch & Load VRM</span>
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Fetch & Add As New Model</span>
                       </>
                     )}
                   </button>
                 </div>
 
-                {/* Animation Remote Fetcher: "mixamo_" [] ".fbx" */}
+                {/* Animation Remote Fetcher */}
                 <div className="space-y-1.5 pt-2 border-t border-black/5 dark:border-white/5">
                   <span className="text-[10px] font-mono uppercase tracking-wider text-neutral-400 font-semibold block">
-                    Remote Motion
+                    Remote Motion (Active Actor)
                   </span>
                   <div className="flex items-center gap-1 bg-black/[0.04] dark:bg-white/[0.05] p-1.5 rounded-lg text-xs font-mono border border-black/5 dark:border-white/5">
                     <span className="text-neutral-500 font-semibold shrink-0 select-none">mixamo_</span>
@@ -2119,7 +2400,7 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
                       onChange={(e) => setRemoteAnimName(e.target.value)}
                       placeholder="dance"
                       className="flex-1 min-w-0 bg-white dark:bg-black/40 border border-black/15 dark:border-white/15 rounded px-1.5 py-0.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-[var(--theme-accent,#55d2f6)] text-neutral-900 dark:text-white"
-                      title="Mixamo animation name (e.g. dance, wave, walk, idle, wait)"
+                      title="Mixamo animation name"
                     />
                     <span className="text-neutral-500 font-semibold shrink-0 select-none">.fbx</span>
                   </div>
@@ -2149,139 +2430,433 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
         )}
       </div>
 
-      {/* Live Karaoke Subtitles Overlay (Exact same component from /chat 3D mode) */}
+      {/* =================================================================== */}
+      {/* Right Floating Multi-Model Toolbar (Mirroring Left Side Toolbar)    */}
+      {/* Displays Cast of Models with Show/Hide, Remove, Select, and Scripts */}
+      {/* =================================================================== */}
+      <div
+        className={`absolute top-4 right-4 z-30 backdrop-blur-md rounded-2xl border border-black/10 dark:border-white/10 shadow-xl transition-all duration-200 pointer-events-auto bg-white/85 dark:bg-[#13151f]/85 ${
+          isRightToolbarExpanded ? 'w-72 sm:w-80 p-3 max-h-[calc(100vh-2rem)] overflow-y-auto' : 'w-12 p-1.5'
+        }`}
+      >
+        {/* Right Toolbar Header */}
+        <div className="flex items-center justify-between min-h-[36px]">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <button
+              onClick={() => setIsRightToolbarExpanded((p) => !p)}
+              className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 shadow-xs cursor-pointer border border-black/10 dark:border-white/10 transition-transform active:scale-95 text-white"
+              style={{ backgroundColor: 'var(--theme-accent, #55d2f6)' }}
+              title={isRightToolbarExpanded ? 'Fold model toolbar' : 'Unfold model toolbar'}
+            >
+              <Users className="w-5 h-5 text-neutral-950" />
+            </button>
+
+            {isRightToolbarExpanded && (
+              <div className="min-w-0">
+                <h2 className="text-xs font-bold font-heading truncate text-neutral-900 dark:text-white flex items-center gap-1.5">
+                  <span>Models & Cast</span>
+                  <span className="text-[10px] font-mono px-1.5 py-0.2 rounded-md bg-[var(--theme-accent-soft,rgba(85,210,246,0.15))] text-[var(--theme-accent,#55d2f6)] font-bold">
+                    {models.length}
+                  </span>
+                </h2>
+                <p className="text-[10px] text-neutral-500 dark:text-neutral-400 leading-tight truncate">
+                  Multi-Actor Management
+                </p>
+              </div>
+            )}
+          </div>
+
+          {isRightToolbarExpanded && (
+            <button
+              type="button"
+              onClick={() => setIsRightToolbarExpanded(false)}
+              className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-700 dark:hover:text-white text-xs font-medium cursor-pointer transition-colors"
+              title="Fold model toolbar"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+
+        {/* Expanded Right Toolbar Content */}
+        {isRightToolbarExpanded && (
+          <div className="mt-3 space-y-3 text-xs">
+
+            {/* Batch Play All / Stop All Action Row */}
+            <div className="grid grid-cols-2 gap-1.5">
+              <button
+                type="button"
+                onClick={handlePlayAllScriptsSimultaneously}
+                className="py-1.5 px-2 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 text-[11px] font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-all"
+                title="Play all actors' scripts simultaneously on stage"
+              >
+                <Play className="w-3 h-3 fill-current" />
+                <span>Play All Cast</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleStopAllScripts}
+                className="py-1.5 px-2 rounded-xl bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-600 dark:text-red-400 text-[11px] font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-all"
+                title="Stop all acting sequences and return characters to rest pose"
+              >
+                <Square className="w-3 h-3 fill-current" />
+                <span>Stop All</span>
+              </button>
+            </div>
+
+            {/* List of Models */}
+            <div className="space-y-2 max-h-[55vh] overflow-y-auto pr-0.5">
+              <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-wider text-neutral-400 font-semibold px-0.5">
+                <span>Stage Actors ({models.length})</span>
+                <span>Click to Select</span>
+              </div>
+
+              {models.map((model, idx) => {
+                const isActive = model.id === activeModelId;
+                const isPlayingThis = model.isPlaying;
+
+                return (
+                  <div
+                    key={model.id}
+                    onClick={() => setActiveModelId(model.id)}
+                    className={`p-2.5 rounded-2xl border transition-all cursor-pointer relative ${
+                      isActive
+                        ? 'border-[var(--theme-accent,#55d2f6)] bg-[var(--theme-accent-soft,rgba(85,210,246,0.12))] ring-2 ring-[var(--theme-accent,#55d2f6)]/60 shadow-xs'
+                        : 'border-black/10 dark:border-white/10 bg-black/[0.02] dark:bg-white/[0.03] hover:border-neutral-400 dark:hover:border-neutral-600'
+                    } ${!model.visible ? 'opacity-60 grayscale-[35%]' : ''}`}
+                  >
+                    {/* Header Row: Actor Name + Action Buttons */}
+                    <div className="flex items-start justify-between gap-1.5">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div
+                          className="w-7 h-7 rounded-xl flex items-center justify-center shrink-0 font-mono font-bold text-xs"
+                          style={{
+                            backgroundColor: isActive
+                              ? 'var(--theme-accent, #55d2f6)'
+                              : 'rgba(0,0,0,0.06)',
+                            color: isActive ? '#000' : 'inherit',
+                          }}
+                        >
+                          #{idx + 1}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-bold text-xs text-neutral-900 dark:text-white truncate">
+                              {model.name}
+                            </span>
+                            {isActive && (
+                              <span className="text-[9px] font-mono px-1.5 py-0.2 rounded-md bg-[var(--theme-accent,#55d2f6)] text-neutral-950 font-bold shrink-0">
+                                Active
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[10px] text-neutral-400 font-mono truncate block">
+                            Pos: ({model.transform.x}, {model.transform.z})
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Show/Hide & Remove Options */}
+                      <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                        {/* Play/Stop Script Button for this Model */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (isPlayingThis) {
+                              handleStopModelScript(model.id);
+                            } else {
+                              handlePlayModelScript(model.id);
+                            }
+                          }}
+                          className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                            isPlayingThis
+                              ? 'bg-red-500/20 text-red-600 hover:bg-red-500/30'
+                              : 'text-neutral-500 hover:text-emerald-500 hover:bg-black/5 dark:hover:bg-white/10'
+                          }`}
+                          title={isPlayingThis ? 'Stop script' : 'Play this model\'s independent script'}
+                        >
+                          {isPlayingThis ? (
+                            <Square className="w-3.5 h-3.5 fill-current" />
+                          ) : (
+                            <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
+                          )}
+                        </button>
+
+                        {/* Show / Hide Option */}
+                        <button
+                          type="button"
+                          onClick={(e) => handleToggleModelVisibility(model.id, e)}
+                          className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                            model.visible
+                              ? 'text-neutral-500 hover:text-neutral-800 dark:hover:text-white hover:bg-black/5 dark:hover:bg-white/10'
+                              : 'text-neutral-400 bg-black/10 dark:bg-white/10'
+                          }`}
+                          title={model.visible ? 'Hide model from 3D stage' : 'Show model on 3D stage'}
+                        >
+                          {model.visible ? (
+                            <Eye className="w-3.5 h-3.5" />
+                          ) : (
+                            <EyeOff className="w-3.5 h-3.5 text-neutral-400" />
+                          )}
+                        </button>
+
+                        {/* Remove Option */}
+                        <button
+                          type="button"
+                          onClick={(e) => handleRemoveModel(model.id, e)}
+                          className="p-1.5 rounded-lg text-neutral-400 hover:text-red-500 hover:bg-red-500/10 transition-colors cursor-pointer"
+                          title="Remove model from stage"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Model Details & Script info */}
+                    <div className="mt-2 pt-1.5 border-t border-black/5 dark:border-white/5 flex items-center justify-between text-[10px] text-neutral-500 dark:text-neutral-400">
+                      <div className="flex items-center gap-1.5 truncate">
+                        <span className="truncate">
+                          Motion: <strong>{model.activeAnimKey}</strong>
+                        </span>
+                        <span>&bull;</span>
+                        <span className="truncate">
+                          Emotion: <strong>{model.activeEmotionKey}</strong>
+                        </span>
+                      </div>
+                      <span className="font-mono text-[9px] px-1.5 py-0.5 rounded bg-black/[0.04] dark:bg-white/[0.05] shrink-0">
+                        {model.cues.length} Cues
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Preset Outfit Modal (Spawns a new model with chosen outfit) */}
+      {isAddOutfitModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/50 backdrop-blur-xs animate-in fade-in duration-150"
+          onClick={() => setIsAddOutfitModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-lg rounded-3xl border border-black/10 dark:border-white/10 bg-white dark:bg-[#13151f] shadow-2xl p-4 sm:p-5 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-black/5 dark:border-white/10 pb-3">
+              <div className="flex items-center gap-2">
+                <UserPlus className="w-5 h-5 text-[var(--theme-accent,#55d2f6)]" />
+                <h3 className="text-sm font-bold font-heading text-neutral-900 dark:text-white">
+                  Add Actor from Wardrobe
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAddOutfitModalOpen(false)}
+                className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-700 dark:hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-neutral-500 dark:text-neutral-400">
+              Select an outfit to spawn an additional character onto the 3D stage with its own independent script and animations.
+            </p>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-[50vh] overflow-y-auto p-1">
+              {WARDROBE_OUTFITS.map((outfit) => (
+                <button
+                  key={outfit.id}
+                  type="button"
+                  onClick={() => handleAddPresetModel(outfit.id)}
+                  className="p-2.5 rounded-xl border border-black/10 dark:border-white/10 bg-black/[0.02] dark:bg-white/[0.02] hover:border-[var(--theme-accent,#55d2f6)] hover:bg-[var(--theme-accent-soft,rgba(85,210,246,0.1))] text-left transition-all cursor-pointer flex flex-col justify-between gap-1.5"
+                >
+                  <span className="text-xs font-bold text-neutral-900 dark:text-white truncate">
+                    {outfit.name}
+                  </span>
+                  <span className="text-[10px] text-neutral-400 font-mono truncate">
+                    {outfit.fileName}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Live Karaoke Subtitles Overlay */}
       {showSubtitles && (
         <div className="absolute bottom-28 left-0 right-0 z-20 flex justify-center pointer-events-none">
           <VRMSubtitles
             isActive={subtitleState.isActive}
-            text={subtitleState.text}
+            text={
+              subtitleState.speakerName
+                ? `[${subtitleState.speakerName}]: ${subtitleState.text}`
+                : subtitleState.text
+            }
             charIndex={subtitleState.charIndex}
             currentWord={subtitleState.currentWord}
           />
         </div>
       )}
 
-      {/* Minimal Bottom Timeline Bar */}
-      {isScriptEditorOpen && (
-        <div className="absolute bottom-4 left-4 right-4 z-20 flex items-center justify-center">
-          <div className="w-full max-w-4xl p-2.5 sm:p-3 rounded-2xl backdrop-blur-xl border border-black/10 dark:border-white/10 shadow-2xl flex items-center gap-2.5 overflow-hidden bg-white/90 dark:bg-[#13151f]/90">
-            {/* Play / Stop Button */}
-            {!isPlaying ? (
-              <button
-                onClick={handlePlayTimeline}
-                className="w-11 h-11 rounded-xl flex items-center justify-center text-white shrink-0 shadow-md active:scale-95 transition-all cursor-pointer"
-                style={{ backgroundColor: 'var(--theme-accent, #55d2f6)' }}
-                title="Play script sequentially"
+      {/* Minimal Bottom Timeline Bar (Edits Active Model's Independent Script) */}
+      {isScriptEditorOpen && activeModel && (
+        <div className="absolute bottom-4 left-4 right-4 z-20 flex items-center justify-center pointer-events-none">
+          <div className="w-full max-w-4xl p-2.5 sm:p-3 rounded-2xl backdrop-blur-xl border border-black/10 dark:border-white/10 shadow-2xl flex flex-col gap-2 bg-white/90 dark:bg-[#13151f]/90 pointer-events-auto">
+            {/* Script Actor Indicator & Switcher Tab */}
+            <div className="flex items-center justify-between text-xs pb-1 border-b border-black/5 dark:border-white/5">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-neutral-400 font-semibold">
+                  Script for:
+                </span>
+                <div className="flex items-center gap-1">
+                  {models.map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => setActiveModelId(m.id)}
+                      className={`px-2 py-0.5 rounded-lg text-[11px] font-medium transition-all cursor-pointer flex items-center gap-1 ${
+                        m.id === activeModelId
+                          ? 'bg-[var(--theme-accent,#55d2f6)] text-neutral-950 font-bold shadow-xs'
+                          : 'bg-black/5 dark:bg-white/5 text-neutral-600 dark:text-neutral-300 hover:bg-black/10 dark:hover:bg-white/10'
+                      }`}
+                    >
+                      <span className="truncate max-w-[100px]">{m.name}</span>
+                      {m.isPlaying && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-mono text-neutral-400">
+                  {activeModel.cues.length} step{activeModel.cues.length === 1 ? '' : 's'}
+                </span>
+              </div>
+            </div>
+
+            {/* Play Button & Steps Row */}
+            <div className="flex items-center gap-2.5 overflow-hidden">
+              {/* Play / Stop Button for Active Model Script */}
+              {!activeModel.isPlaying ? (
+                <button
+                  onClick={() => handlePlayModelScript(activeModel.id)}
+                  className="w-11 h-11 rounded-xl flex items-center justify-center text-white shrink-0 shadow-md active:scale-95 transition-all cursor-pointer"
+                  style={{ backgroundColor: 'var(--theme-accent, #55d2f6)' }}
+                  title={`Play ${activeModel.name}'s script sequentially`}
+                >
+                  <Play className="w-4 h-4 fill-current ml-0.5 text-neutral-950" />
+                </button>
+              ) : (
+                <button
+                  onClick={() => handleStopModelScript(activeModel.id)}
+                  className="w-11 h-11 rounded-xl flex items-center justify-center bg-red-500 hover:bg-red-600 text-white shrink-0 shadow-md active:scale-95 transition-all cursor-pointer"
+                  title="Stop playback"
+                >
+                  <Square className="w-4 h-4 fill-current" />
+                </button>
+              )}
+
+              {/* Horizontally Scrollable Steps List */}
+              <div
+                ref={timelineScrollRef}
+                className="flex-1 flex items-center gap-2 overflow-x-auto py-1 scroll-smooth"
               >
-                <Play className="w-4 h-4 fill-current ml-0.5" />
-              </button>
-            ) : (
-              <button
-                onClick={handleStopPlayback}
-                className="w-11 h-11 rounded-xl flex items-center justify-center bg-red-500 hover:bg-red-600 text-white shrink-0 shadow-md active:scale-95 transition-all cursor-pointer"
-                title="Stop playback"
-              >
-                <Square className="w-4 h-4 fill-current" />
-              </button>
-            )}
+                {activeModel.cues.map((cue, idx) => {
+                  const isStepActive = activeModel.isPlaying && activeModel.activePlayingIndex === idx;
+                  const selectedAnim = animations.find((a) => a.key === cue.animationKey) || animations[0];
+                  return (
+                    <div
+                      key={cue.id}
+                      className={`w-64 sm:w-72 shrink-0 p-2.5 rounded-xl border flex flex-col gap-2 transition-all ${
+                        isStepActive
+                          ? 'border-[var(--theme-accent,#55d2f6)] bg-[var(--theme-accent-soft,rgba(85,210,246,0.1))] ring-2 ring-[var(--theme-accent,#55d2f6)]'
+                          : 'border-black/10 dark:border-white/10 bg-black/[0.02] dark:bg-white/[0.02]'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="font-mono font-bold text-neutral-500 dark:text-neutral-400">
+                          #{idx + 1}
+                        </span>
 
-            {/* Horizontally Scrollable Steps List */}
-            <div
-              ref={timelineScrollRef}
-              className="flex-1 flex items-center gap-2 overflow-x-auto py-1 scroll-smooth"
-            >
-              {cues.map((cue, idx) => {
-                const isStepActive = isPlaying && activePlayingIndex === idx;
-                const selectedAnim = animations.find((a) => a.key === cue.animationKey) || animations[0];
-                return (
-                  <div
-                    key={cue.id}
-                    className={`w-64 sm:w-72 shrink-0 p-2.5 rounded-xl border flex flex-col gap-2 transition-all ${
-                      isStepActive
-                        ? 'border-[var(--theme-accent,#55d2f6)] bg-[var(--theme-accent-soft,rgba(85,210,246,0.1))] ring-2 ring-[var(--theme-accent,#55d2f6)]'
-                        : 'border-black/10 dark:border-white/10 bg-black/[0.02] dark:bg-white/[0.02]'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between text-[11px]">
-                      <span className="font-mono font-bold text-neutral-500 dark:text-neutral-400">
-                        #{idx + 1}
-                      </span>
-
-                      <button
-                        onClick={() => handleDeleteStep(cue.id)}
-                        className="p-1 rounded text-neutral-400 hover:text-red-500 transition-colors cursor-pointer"
-                        title="Remove step"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-
-                    {/* 2 Slots: Slot 1 Motion (Pop-up Modal Trigger), Slot 2 Emotion */}
-                    <div className="grid grid-cols-2 gap-1.5 text-[11px]">
-                      {/* Slot 1: Motion Pop-up Modal Trigger Button */}
-                      <button
-                        type="button"
-                        onClick={() => openAnimationModalForCue(cue.id)}
-                        className="flex items-center justify-between gap-1 px-2 py-1 rounded-lg bg-black/[0.04] dark:bg-white/[0.04] hover:bg-black/[0.08] dark:hover:bg-white/[0.08] border border-black/5 dark:border-white/5 hover:border-[var(--theme-accent,#55d2f6)] min-w-0 cursor-pointer transition-all text-left"
-                        title="Slot 1: Click to choose Character Motion"
-                      >
-                        <div className="flex items-center gap-1 min-w-0">
-                          <span className="text-[10px] font-mono font-bold text-neutral-400 shrink-0">1:</span>
-                          <span className="text-[11px] font-semibold text-[var(--theme-accent,#55d2f6)] truncate">
-                            {selectedAnim?.name || cue.animationKey}
-                          </span>
-                        </div>
-                        <ChevronDown className="w-3 h-3 text-neutral-400 shrink-0" />
-                      </button>
-
-                      {/* Slot 2: Emotion */}
-                      <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-black/[0.04] dark:bg-white/[0.04] border border-black/5 dark:border-white/5 min-w-0">
-                        <span className="text-[10px] font-mono font-bold text-neutral-400 shrink-0">2:</span>
-                        <select
-                          value={cue.emotionKey || 'neutral'}
-                          onChange={(e) => {
-                            handleUpdateStep(cue.id, { emotionKey: e.target.value });
-                            applyEmotionByKey(e.target.value);
-                          }}
-                          className="w-full bg-transparent text-[11px] font-semibold text-rose-500 dark:text-rose-400 focus:outline-none cursor-pointer truncate"
-                          title="Slot 2: Facial Emotion / Expression"
+                        <button
+                          onClick={() => handleDeleteStep(cue.id)}
+                          className="p-1 rounded text-neutral-400 hover:text-red-500 transition-colors cursor-pointer"
+                          title="Remove step"
                         >
-                          {ACT_EMOTIONS.map((emo) => (
-                            <option key={emo.key} value={emo.key}>
-                              {emo.emoji} {emo.name}
-                            </option>
-                          ))}
-                        </select>
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
+
+                      {/* 2 Slots: Slot 1 Motion, Slot 2 Emotion */}
+                      <div className="grid grid-cols-2 gap-1.5 text-[11px]">
+                        <button
+                          type="button"
+                          onClick={() => openAnimationModalForCue(cue.id)}
+                          className="flex items-center justify-between gap-1 px-2 py-1 rounded-lg bg-black/[0.04] dark:bg-white/[0.04] hover:bg-black/[0.08] dark:hover:bg-white/[0.08] border border-black/5 dark:border-white/5 hover:border-[var(--theme-accent,#55d2f6)] min-w-0 cursor-pointer transition-all text-left"
+                          title="Slot 1: Choose Motion"
+                        >
+                          <div className="flex items-center gap-1 min-w-0">
+                            <span className="text-[10px] font-mono font-bold text-neutral-400 shrink-0">1:</span>
+                            <span className="text-[11px] font-semibold text-[var(--theme-accent,#55d2f6)] truncate">
+                              {selectedAnim?.name || cue.animationKey}
+                            </span>
+                          </div>
+                          <ChevronDown className="w-3 h-3 text-neutral-400 shrink-0" />
+                        </button>
+
+                        <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-black/[0.04] dark:bg-white/[0.04] border border-black/5 dark:border-white/5 min-w-0">
+                          <span className="text-[10px] font-mono font-bold text-neutral-400 shrink-0">2:</span>
+                          <select
+                            value={cue.emotionKey || 'neutral'}
+                            onChange={(e) => {
+                              handleUpdateStep(cue.id, { emotionKey: e.target.value });
+                              applyEmotionForModel(activeModelId, e.target.value);
+                            }}
+                            className="w-full bg-transparent text-[11px] font-semibold text-rose-500 dark:text-rose-400 focus:outline-none cursor-pointer truncate"
+                            title="Slot 2: Emotion"
+                          >
+                            {ACT_EMOTIONS.map((emo) => (
+                              <option key={emo.key} value={emo.key}>
+                                {emo.emoji} {emo.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Optional Script Input */}
+                      <input
+                        type="text"
+                        value={cue.text}
+                        onChange={(e) => handleUpdateStep(cue.id, { text: e.target.value })}
+                        placeholder="(Optional) Speech text..."
+                        className="w-full px-2 py-1.5 rounded-lg bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/10 text-xs focus:outline-none text-neutral-800 dark:text-neutral-100"
+                      />
                     </div>
+                  );
+                })}
 
-                    {/* Optional Script Input */}
-                    <input
-                      type="text"
-                      value={cue.text}
-                      onChange={(e) => handleUpdateStep(cue.id, { text: e.target.value })}
-                      placeholder="(Optional) Speech text..."
-                      className="w-full px-2 py-1.5 rounded-lg bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/10 text-xs focus:outline-none text-neutral-800 dark:text-neutral-100"
-                    />
-                  </div>
-                );
-              })}
-
-              {/* Quick Add Step Button */}
-              <button
-                onClick={handleAddStep}
-                className="h-14 px-3 rounded-xl border-2 border-dashed border-black/15 dark:border-white/15 hover:border-[var(--theme-accent,#55d2f6)] text-neutral-400 hover:text-[var(--theme-accent,#55d2f6)] flex items-center justify-center gap-1 text-xs font-semibold shrink-0 cursor-pointer transition-all"
-                title="Add step"
-              >
-                <Plus className="w-4 h-4 stroke-[2.5]" />
-                <span>Step</span>
-              </button>
+                {/* Quick Add Step Button */}
+                <button
+                  onClick={handleAddStep}
+                  className="h-14 px-3 rounded-xl border-2 border-dashed border-black/15 dark:border-white/15 hover:border-[var(--theme-accent,#55d2f6)] text-neutral-400 hover:text-[var(--theme-accent,#55d2f6)] flex items-center justify-center gap-1 text-xs font-semibold shrink-0 cursor-pointer transition-all"
+                  title="Add step to active actor script"
+                >
+                  <Plus className="w-4 h-4 stroke-[2.5]" />
+                  <span>Step</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* Pop-up Animation Selector Modal (Replaces Dropdown Menu) */}
+      {/* Pop-up Animation Selector Modal */}
       {isAnimModalOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/50 backdrop-blur-xs animate-in fade-in duration-150"
@@ -2308,7 +2883,7 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
                     <h2 className="text-sm sm:text-base font-bold font-heading text-neutral-900 dark:text-white truncate">
                       {targetCueIndex !== null
                         ? `Select Motion for Step #${targetCueIndex + 1}`
-                        : 'Standby Animation Collection'}
+                        : `Motions for ${activeModel?.name || 'Active Actor'}`}
                     </h2>
                     <span
                       className="text-[10px] font-mono uppercase px-2 py-0.5 rounded-full font-bold shrink-0"
@@ -2323,7 +2898,7 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
                   <p className="text-[11px] text-neutral-500 dark:text-neutral-400 truncate">
                     {targetCueIndex !== null
                       ? 'Choose a Mixamo FBX animation to assign to this timeline cue and preview on stage.'
-                      : 'Click any Mixamo FBX animation below to preview it live on the 3D stage.'}
+                      : 'Click any Mixamo FBX animation below to preview it live on the active actor.'}
                   </p>
                 </div>
               </div>
@@ -2415,7 +2990,7 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
                         onClick={() => {
                           if (animModalTargetCueId) {
                             handleUpdateStep(animModalTargetCueId, { animationKey: anim.key });
-                            playAnimationByKey(anim.key);
+                            playAnimationForModel(activeModelId, anim.key);
                             setIsAnimModalOpen(false);
                           } else {
                             handleToggleOrPlayAnimation(anim.key);

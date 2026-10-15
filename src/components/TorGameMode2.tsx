@@ -247,24 +247,23 @@ export const TorGameMode2: React.FC<TorGameMode2Props> = ({
 
   // Game & Survival State
   const [gameState, setGameState] = useState<'loading' | 'cinematic' | 'training' | 'punishment' | 'gameover'>('loading');
+  const gameStateRef = useRef<'loading' | 'cinematic' | 'training' | 'punishment' | 'gameover'>('loading');
+  const isMountedRef = useRef<boolean>(true);
+
   const [loadingText, setLoadingText] = useState<string>('Summoning private torture chamber...');
   const [countdownText, setCountdownText] = useState<string>('');
   const [loadingPercent, setLoadingPercent] = useState<number>(15);
 
   const [lives, setLives] = useState<number>(3); // 3 -> 2 -> 1 (last chance with base model) -> 0 (game over)
   const livesRef = useRef<number>(3);
-  useEffect(() => {
-    livesRef.current = lives;
-  }, [lives]);
 
   const [round, setRound] = useState<number>(1);
   const roundRef = useRef<number>(1);
-  useEffect(() => {
-    roundRef.current = round;
-  }, [round]);
 
   const [survivalTimeSec, setSurvivalTimeSec] = useState<number>(0);
   const survivalTimerRef = useRef<number>(0);
+  const lastSurvivalSecRef = useRef<number>(0);
+
   const [combo, setCombo] = useState<number>(0);
   const [maxCombo, setMaxCombo] = useState<number>(0);
   const [perfectHits, setPerfectHits] = useState<number>(0);
@@ -277,9 +276,9 @@ export const TorGameMode2: React.FC<TorGameMode2Props> = ({
     beatsRef.current = beats;
   }, [beats]);
 
+  const beatElementsRef = useRef<Map<number, HTMLDivElement>>(new Map());
   const exerciseStartTimeRef = useRef<number>(0);
   const currentBpmRef = useRef<number>(85);
-  const [exerciseProgress, setExerciseProgress] = useState<number>(0);
 
   // Dialogue & Subtitles
   const [subtitles, setSubtitles] = useState<string>('');
@@ -294,6 +293,63 @@ export const TorGameMode2: React.FC<TorGameMode2Props> = ({
   }, [soundEnabled]);
 
   const [isHelpOpen, setIsHelpOpen] = useState<boolean>(false);
+
+  // Cinematic & Timers Management
+  const cinematicActiveRef = useRef<boolean>(false);
+  const doorRafRef = useRef<number | null>(null);
+  const npcWalkRafRef = useRef<number | null>(null);
+  const cinematicTimerRef = useRef<number | null>(null);
+  const activeTimeoutsRef = useRef<number[]>([]);
+
+  const executePunishmentRef = useRef<(() => void) | null>(null);
+  const playCinematicIntroRef = useRef<(() => void) | null>(null);
+
+  const clearCinematicTimers = useCallback(() => {
+    if (doorRafRef.current) {
+      cancelAnimationFrame(doorRafRef.current);
+      doorRafRef.current = null;
+    }
+    if (npcWalkRafRef.current) {
+      cancelAnimationFrame(npcWalkRafRef.current);
+      npcWalkRafRef.current = null;
+    }
+    if (cinematicTimerRef.current) {
+      clearTimeout(cinematicTimerRef.current);
+      cinematicTimerRef.current = null;
+    }
+  }, []);
+
+  const clearAllTimeouts = useCallback(() => {
+    activeTimeoutsRef.current.forEach((id) => clearTimeout(id));
+    activeTimeoutsRef.current = [];
+  }, []);
+
+  const safeTimeout = useCallback((fn: () => void, delayMs: number) => {
+    const id = window.setTimeout(() => {
+      activeTimeoutsRef.current = activeTimeoutsRef.current.filter((t) => t !== id);
+      fn();
+    }, delayMs);
+    activeTimeoutsRef.current.push(id);
+    return id;
+  }, []);
+
+  const updateGameState = useCallback((nextState: 'loading' | 'cinematic' | 'training' | 'punishment' | 'gameover') => {
+    gameStateRef.current = nextState;
+    setGameState(nextState);
+  }, []);
+
+  // Component lifecycle mount/unmount safety
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      clearAllTimeouts();
+      clearCinematicTimers();
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, [clearAllTimeouts, clearCinematicTimers]);
 
   // Audio Context for Haptics & Rhythm Cues
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -563,7 +619,6 @@ export const TorGameMode2: React.FC<TorGameMode2Props> = ({
     act.setLoop(loop ? THREE.LoopRepeat : THREE.LoopOnce, loop ? Infinity : 1);
     act.clampWhenFinished = !loop;
 
-    // Cross-fade with currently playing actions
     for (const key in playerActionsRef.current) {
       const other = playerActionsRef.current[key];
       if (other && other !== act && other.isRunning()) {
@@ -604,9 +659,7 @@ export const TorGameMode2: React.FC<TorGameMode2Props> = ({
     return act;
   }, []);
 
-  // ----------------------------------------------------
   // Trigger Dynamic Ragdoll Bone Impact
-  // ----------------------------------------------------
   const triggerRagdollImpact = useCallback((boneKey: string, force: number = 0.8) => {
     ragdollImpulseRef.current = {
       boneKey,
@@ -615,7 +668,6 @@ export const TorGameMode2: React.FC<TorGameMode2Props> = ({
     };
     playSynthSound('impact');
 
-    // Camera screen shake
     cameraPitchRef.current += (Math.random() - 0.5) * 0.08;
     cameraYawRef.current += (Math.random() - 0.5) * 0.08;
   }, [playSynthSound]);
@@ -624,31 +676,34 @@ export const TorGameMode2: React.FC<TorGameMode2Props> = ({
   // Start A Training Round with New Exercise & Beat Map
   // ----------------------------------------------------
   const startTrainingRound = useCallback(async (overrideExercise?: ExerciseDef) => {
+    cinematicActiveRef.current = false;
+    clearCinematicTimers();
+
     const curRound = roundRef.current;
     const exercise = overrideExercise || EXERCISES[(curRound - 1) % EXERCISES.length];
     setCurrentExercise(exercise);
-    setGameState('training');
+    updateGameState('training');
 
-    // Much more relaxed and comfortable BPM: starts at 48 BPM (~1.25s per move), scaling very gently by 3 BPM per round up to 72 BPM
+    // Ensure doors open and NPC positioned correctly
+    if (doorPivotLeftRef.current) doorPivotLeftRef.current.rotation.y = -Math.PI * 0.45;
+    if (doorPivotRightRef.current) doorPivotRightRef.current.rotation.y = Math.PI * 0.45;
+    npcRootRef.current.position.set(0, 0, -1.35);
+    npcRootRef.current.rotation.y = 0;
+
     const bpm = Math.min(48 + (curRound - 1) * 3, 72);
     currentBpmRef.current = bpm;
     const beatIntervalMs = (60 / bpm) * 1000;
 
-    // NPC speaks the command
     await speakDialogue(`"${exercise.command}"`, 'Hana (Dominant)');
 
-    // Start player exercise animation - ensure player remains facing the NPC at 180 deg
     playerRootRef.current.rotation.y = Math.PI;
     await playPlayerAnim(exercise.animationFile, true);
-    // NPC stands in idle watching
     await playNpcAnim('mixamo_idle.fbx', true);
 
-    // Generate rhythmic beats
     const directions: Direction[] = ['up', 'down', 'left', 'right'];
     const totalBeats = Math.min(6 + curRound * 2, 14);
     const newBeats: RhythmBeat[] = [];
 
-    // Generous lead-in time of 3.8 seconds so the player is fully prepared
     const leadInMs = 3800;
     for (let i = 0; i < totalBeats; i++) {
       const dir = directions[Math.floor(Math.random() * directions.length)];
@@ -661,25 +716,29 @@ export const TorGameMode2: React.FC<TorGameMode2Props> = ({
     }
 
     setBeats(newBeats);
+    beatsRef.current = newBeats;
     exerciseStartTimeRef.current = performance.now();
 
     // Visual countdown sequence
     setCountdownText('GET READY: 3');
-    setTimeout(() => setCountdownText('2'), 1100);
-    setTimeout(() => setCountdownText('1'), 2200);
-    setTimeout(() => setCountdownText('GO!'), 3300);
-    setTimeout(() => setCountdownText(''), 4300);
-  }, [playPlayerAnim, playNpcAnim, speakDialogue]);
+    safeTimeout(() => setCountdownText('2'), 1100);
+    safeTimeout(() => setCountdownText('1'), 2200);
+    safeTimeout(() => setCountdownText('GO!'), 3300);
+    safeTimeout(() => setCountdownText(''), 4300);
+  }, [clearCinematicTimers, playNpcAnim, playPlayerAnim, safeTimeout, speakDialogue, updateGameState]);
 
   // ----------------------------------------------------
   // Execution of Punishment on Miss / Failure
   // ----------------------------------------------------
   const executePunishment = useCallback(async () => {
-    setGameState('punishment');
+    if (gameStateRef.current !== 'training') return;
+    updateGameState('punishment');
     playSynthSound('miss');
 
     const curLives = livesRef.current;
-    const nextLives = curLives - 1;
+    if (curLives <= 0) return;
+    const nextLives = Math.max(0, curLives - 1);
+    livesRef.current = nextLives;
     setLives(nextLives);
     setCombo(0);
 
@@ -689,7 +748,6 @@ export const TorGameMode2: React.FC<TorGameMode2Props> = ({
       ? 'mixamo_boxing_groinkick.fbx'
       : NPC_ATTACKS[Math.floor(Math.random() * NPC_ATTACKS.length)];
 
-    // NPC taunts
     const punishmentTaunts = [
       "Pathetic! You missed the rhythm already?!",
       "Is that all you can endure? Take this!",
@@ -701,94 +759,94 @@ export const TorGameMode2: React.FC<TorGameMode2Props> = ({
     // 1. NPC plays attack
     playNpcAnim(chosenAttack, false);
 
-    // 2. Special timing rule for groin kick:
-    // "If the NPC picks this mixamo_boxing_groinkick.fbx then play the player's mixamo_groin_hurt.fbx animation 1.5 seconds after the NPC's one begins."
+    // 2. Special timing rule for groin kick vs normal attack
     if (chosenAttack === 'mixamo_boxing_groinkick.fbx') {
-      setTimeout(() => {
+      safeTimeout(() => {
+        if (!isMountedRef.current) return;
         playPlayerAnim('mixamo_groin_hurt.fbx', false);
         triggerRagdollImpact('hips', 1.0);
       }, 1500);
     } else {
-      // Other combat attack: apply impact at apex (approx 700ms)
-      setTimeout(() => {
+      safeTimeout(() => {
+        if (!isMountedRef.current) return;
         triggerRagdollImpact('chest', 0.85);
         playPlayerAnim('mixamo_idle_injured.fbx', false);
       }, 700);
     }
 
-    // Check if player has lives remaining or game over
+    // Check lives remaining
     if (nextLives === 2) {
       // 1st strike: player gets 2 more chances.
-      // "idle animation is now mixamo_idle_injured.fbx throughout the rest of the game session"
-      setTimeout(async () => {
+      safeTimeout(async () => {
+        if (!isMountedRef.current) return;
         await playPlayerAnim('mixamo_idle_injured.fbx', true);
         await playNpcAnim('mixamo_idle.fbx', true);
         speakDialogue("Get back up! We are not finished yet!", 'Hana (Dominant)');
-        setTimeout(() => {
+        safeTimeout(() => {
+          if (!isMountedRef.current) return;
           startTrainingRound();
         }, 2200);
       }, 3400);
     } else if (nextLives === 1) {
-      // 2nd strike: Last chance!
-      // "For the last chance, the player's model is changed to hana_v1.5_base_vrm1.vrm"
-      setTimeout(async () => {
+      // 2nd strike: Last chance! Stripped to base form
+      safeTimeout(async () => {
+        if (!isMountedRef.current) return;
         setLoadingText('Stripping to Base Natural Form...');
         await loadPlayerVRM('hana_v1.5_base_vrm1.vrm');
         await playPlayerAnim('mixamo_idle_injured.fbx', true);
         await playNpcAnim('mixamo_idle.fbx', true);
         speakDialogue("Down to your bare natural form, are you? One more mistake and you are finished!", 'Hana (Dominant)');
-        setTimeout(() => {
+        safeTimeout(() => {
+          if (!isMountedRef.current) return;
           startTrainingRound();
         }, 2600);
       }, 3400);
     } else {
       // 3rd strike: GAME OVER / FATAL BLOW!
-      // "if user fails the last one then the impact from NPC's attack should also run either mixamo_dying.fbx, mixamo_dying_flyback.fbx or mixamo_dying_strangled.fbx.
-      // If the probability chance selects this alternate option then make the NPC walk over behind the player model and then play mixamo_highkick.fbx and the player will have mixamo_dying_slideforward.fbx animation."
       const isAlternateExecution = Math.random() < 0.5;
 
       if (!isAlternateExecution) {
-        // Standard fatal blow: random dying animation
         const dyingAnim = DYING_FRONT_ANIMATIONS[Math.floor(Math.random() * DYING_FRONT_ANIMATIONS.length)];
-        setTimeout(async () => {
+        safeTimeout(async () => {
+          if (!isMountedRef.current) return;
           triggerRagdollImpact('spine', 1.2);
           await playPlayerAnim(dyingAnim, false);
           speakDialogue("And down you go. You have reached your absolute limit...", 'Hana (Dominant)');
-          setTimeout(() => {
-            setGameState('gameover');
+          safeTimeout(() => {
+            if (!isMountedRef.current) return;
+            updateGameState('gameover');
           }, 3500);
         }, chosenAttack === 'mixamo_boxing_groinkick.fbx' ? 1600 : 800);
       } else {
-        // Alternate Execution:
-        // NPC walks over behind the player model, plays mixamo_highkick.fbx, and player plays mixamo_dying_slideforward.fbx!
-        setTimeout(async () => {
+        safeTimeout(async () => {
+          if (!isMountedRef.current) return;
           speakDialogue("Turn around... I have a special final sendoff for you.", 'Hana (Dominant)');
-          // NPC walks behind player
           await playNpcAnim('mixamo_walk.fbx', true);
 
-          // Animate NPC moving to z = 1.2 (behind player at z = 0, facing -z)
           const startTime = performance.now();
           const walkDuration = 1800;
           const startPos = npcRootRef.current.position.clone();
           const targetPos = new THREE.Vector3(0, 0, 1.3);
 
           const stepWalk = () => {
+            if (!isMountedRef.current) return;
             const elapsed = performance.now() - startTime;
             const progress = Math.min(1, elapsed / walkDuration);
             npcRootRef.current.position.lerpVectors(startPos, targetPos, progress);
-            npcRootRef.current.rotation.y = Math.PI; // Face player
+            npcRootRef.current.rotation.y = Math.PI;
 
             if (progress < 1) {
               requestAnimationFrame(stepWalk);
             } else {
-              // High kick from behind!
               playNpcAnim('mixamo_highkick.fbx', false);
-              setTimeout(() => {
+              safeTimeout(() => {
+                if (!isMountedRef.current) return;
                 triggerRagdollImpact('spine', 1.3);
                 playPlayerAnim('mixamo_dying_slideforward.fbx', false);
                 speakDialogue("Execution complete. Game over.", 'Hana (Dominant)');
-                setTimeout(() => {
-                  setGameState('gameover');
+                safeTimeout(() => {
+                  if (!isMountedRef.current) return;
+                  updateGameState('gameover');
                 }, 4000);
               }, 750);
             }
@@ -797,17 +855,20 @@ export const TorGameMode2: React.FC<TorGameMode2Props> = ({
         }, 1800);
       }
     }
-  }, [playNpcAnim, playPlayerAnim, speakDialogue, triggerRagdollImpact, startTrainingRound, loadPlayerVRM, playSynthSound]);
+  }, [loadPlayerVRM, playNpcAnim, playPlayerAnim, playSynthSound, safeTimeout, speakDialogue, startTrainingRound, triggerRagdollImpact, updateGameState]);
+
+  useEffect(() => {
+    executePunishmentRef.current = executePunishment;
+  }, [executePunishment]);
 
   // ----------------------------------------------------
   // Rhythm Input Timing Evaluation
   // ----------------------------------------------------
   const handleRhythmInput = useCallback((dir: Direction) => {
-    if (gameState !== 'training') return;
+    if (gameStateRef.current !== 'training') return;
     const now = performance.now();
     const elapsedMs = now - exerciseStartTimeRef.current;
 
-    // Find the closest unhit beat
     const activeBeats = beatsRef.current;
     let closestIndex = -1;
     let minDiff = Infinity;
@@ -824,14 +885,12 @@ export const TorGameMode2: React.FC<TorGameMode2Props> = ({
     }
 
     if (closestIndex === -1 || minDiff > 650) {
-      // Early tap when note is still far away: show friendly guidance without punishing
       setHitFeedback({ text: 'WAIT FOR THE LINE...', color: '#f59e0b', id: Date.now() });
       return;
     }
 
     const targetBeat = activeBeats[closestIndex];
 
-    // Check direction match
     if (targetBeat.direction !== dir) {
       targetBeat.hitState = 'miss';
       setBeats([...activeBeats]);
@@ -840,7 +899,6 @@ export const TorGameMode2: React.FC<TorGameMode2Props> = ({
       return;
     }
 
-    // Generous timing windows: 250ms for Perfect, 500ms for Good
     if (minDiff <= 250) {
       targetBeat.hitState = 'perfect';
       playSynthSound('perfect');
@@ -869,11 +927,10 @@ export const TorGameMode2: React.FC<TorGameMode2Props> = ({
 
     setBeats([...activeBeats]);
 
-    // Check if all beats in current exercise round are completed!
     const unhitRemaining = activeBeats.filter((b) => b.hitState === null).length;
     if (unhitRemaining === 0) {
-      // Round completed successfully!
       const nextRound = roundRef.current + 1;
+      roundRef.current = nextRound;
       setRound(nextRound);
 
       const praiseLines = [
@@ -884,16 +941,17 @@ export const TorGameMode2: React.FC<TorGameMode2Props> = ({
       ];
       speakDialogue(praiseLines[Math.floor(Math.random() * praiseLines.length)], 'Hana (Dominant)');
 
-      setTimeout(() => {
+      safeTimeout(() => {
+        if (!isMountedRef.current) return;
         startTrainingRound();
       }, 2000);
     }
-  }, [gameState, executePunishment, playSynthSound, speakDialogue, startTrainingRound]);
+  }, [executePunishment, playSynthSound, safeTimeout, speakDialogue, startTrainingRound]);
 
   // Keyboard Listeners for Rhythm Directions
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (gameState !== 'training') return;
+      if (gameStateRef.current !== 'training') return;
 
       if (e.code === 'ArrowUp' || e.code === 'KeyW') {
         e.preventDefault();
@@ -912,13 +970,14 @@ export const TorGameMode2: React.FC<TorGameMode2Props> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [gameState, handleRhythmInput]);
+  }, [handleRhythmInput]);
 
   // ----------------------------------------------------
   // Cinematic Sequence: Door Opens -> NPC Arrives -> Taunts
   // ----------------------------------------------------
   const playCinematicIntro = useCallback(async () => {
-    setGameState('cinematic');
+    cinematicActiveRef.current = true;
+    updateGameState('cinematic');
     playSynthSound('door');
 
     // 1. Swing open the heavy wooden double-doors
@@ -926,6 +985,7 @@ export const TorGameMode2: React.FC<TorGameMode2Props> = ({
     const doorDuration = 1400;
 
     const animateDoors = () => {
+      if (!cinematicActiveRef.current) return;
       const elapsed = performance.now() - startTime;
       const progress = Math.min(1, elapsed / doorDuration);
       const angle = progress * (Math.PI * 0.45);
@@ -938,12 +998,12 @@ export const TorGameMode2: React.FC<TorGameMode2Props> = ({
       }
 
       if (progress < 1) {
-        requestAnimationFrame(animateDoors);
+        doorRafRef.current = requestAnimationFrame(animateDoors);
       }
     };
-    animateDoors();
+    doorRafRef.current = requestAnimationFrame(animateDoors);
 
-    // 2. NPC walks into the room from outside door (z = -6.2) to front of player (z = -1.35)
+    // 2. NPC walks into the room from outside door (z = -6.0) to front of player (z = -1.35)
     await playNpcAnim('mixamo_walk.fbx', true);
 
     const npcWalkDuration = 3800;
@@ -952,34 +1012,55 @@ export const TorGameMode2: React.FC<TorGameMode2Props> = ({
     const npcEndPos = new THREE.Vector3(0, 0, -1.35);
 
     const stepNpcWalk = () => {
+      if (!cinematicActiveRef.current) return;
       const elapsed = performance.now() - walkStart;
       const progress = Math.min(1, elapsed / npcWalkDuration);
       npcRootRef.current.position.lerpVectors(npcStartPos, npcEndPos, progress);
 
       if (progress < 1) {
-        requestAnimationFrame(stepNpcWalk);
+        npcWalkRafRef.current = requestAnimationFrame(stepNpcWalk);
       } else {
-        // Arrived in front of player
         playNpcAnim('mixamo_idle.fbx', true);
         speakDialogue(
           "Well, well... So you chose to receive pain. Let's see how long your body can endure my private training without breaking!",
           'Hana (Dominant)'
         );
 
-        // Transition to 1st training round after speech
-        setTimeout(() => {
-          startTrainingRound();
+        cinematicTimerRef.current = window.setTimeout(() => {
+          if (cinematicActiveRef.current) {
+            startTrainingRound();
+          }
         }, 4200);
       }
     };
 
-    setTimeout(() => {
-      stepNpcWalk();
+    cinematicTimerRef.current = window.setTimeout(() => {
+      if (cinematicActiveRef.current) {
+        npcWalkRafRef.current = requestAnimationFrame(stepNpcWalk);
+      }
     }, 800);
-  }, [playSynthSound, playNpcAnim, speakDialogue, startTrainingRound]);
+  }, [clearCinematicTimers, playNpcAnim, playSynthSound, speakDialogue, startTrainingRound, updateGameState]);
+
+  useEffect(() => {
+    playCinematicIntroRef.current = playCinematicIntro;
+  }, [playCinematicIntro]);
+
+  const skipCinematic = useCallback(() => {
+    cinematicActiveRef.current = false;
+    clearCinematicTimers();
+
+    if (doorPivotLeftRef.current) doorPivotLeftRef.current.rotation.y = -Math.PI * 0.45;
+    if (doorPivotRightRef.current) doorPivotRightRef.current.rotation.y = Math.PI * 0.45;
+
+    npcRootRef.current.position.set(0, 0, -1.35);
+    npcRootRef.current.rotation.y = 0;
+
+    playNpcAnim('mixamo_idle.fbx', true);
+    startTrainingRound();
+  }, [clearCinematicTimers, playNpcAnim, startTrainingRound]);
 
   // ----------------------------------------------------
-  // Three.js Scene Initialization
+  // Three.js Scene Initialization (Runs ONCE on Mount)
   // ----------------------------------------------------
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1010,7 +1091,6 @@ export const TorGameMode2: React.FC<TorGameMode2Props> = ({
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     // Room Interior Construction
-    // Floor: Dark polished obsidian flagstones
     const floorGeo = new THREE.PlaneGeometry(16, 20);
     const floorMat = new THREE.MeshStandardMaterial({
       color: 0x161922,
@@ -1042,7 +1122,6 @@ export const TorGameMode2: React.FC<TorGameMode2Props> = ({
       metalness: 0.1,
     });
 
-    // Back Wall with Double Door Cutout
     const backWallLeft = new THREE.Mesh(new THREE.BoxGeometry(6.5, 5, 0.4), wallMat);
     backWallLeft.position.set(-4.5, 2.5, -6);
     scene.add(backWallLeft);
@@ -1055,7 +1134,6 @@ export const TorGameMode2: React.FC<TorGameMode2Props> = ({
     backWallTop.position.set(0, 4.1, -6);
     scene.add(backWallTop);
 
-    // Side Walls & Front Wall
     const leftWall = new THREE.Mesh(new THREE.BoxGeometry(0.4, 5, 20), wallMat);
     leftWall.position.set(-8, 2.5, 0);
     scene.add(leftWall);
@@ -1091,7 +1169,6 @@ export const TorGameMode2: React.FC<TorGameMode2Props> = ({
     const ambientLight = new THREE.AmbientLight(0x2d1a3c, 1.4);
     scene.add(ambientLight);
 
-    // Spotlight directly down on the player center
     const centerSpot = new THREE.SpotLight(0xfff5ea, 3.2, 14, Math.PI / 4, 0.45, 1.2);
     centerSpot.position.set(0, 5.5, 0.5);
     centerSpot.target.position.set(0, 0, 0);
@@ -1100,12 +1177,10 @@ export const TorGameMode2: React.FC<TorGameMode2Props> = ({
     scene.add(centerSpot);
     scene.add(centerSpot.target);
 
-    // Amber Rim Light outside the doorway
     const doorRimLight = new THREE.PointLight(0xff8833, 4.0, 10);
     doorRimLight.position.set(0, 2.8, -7.5);
     scene.add(doorRimLight);
 
-    // Cyan accent sconces on side walls
     const sconceL = new THREE.PointLight(0x55d2f6, 1.5, 8);
     sconceL.position.set(-7.5, 2.5, 0);
     scene.add(sconceL);
@@ -1114,35 +1189,29 @@ export const TorGameMode2: React.FC<TorGameMode2Props> = ({
     sconceR.position.set(7.5, 2.5, 0);
     scene.add(sconceR);
 
-    // Add Player and NPC groups
     scene.add(playerRootRef.current);
     scene.add(npcRootRef.current);
 
-    // Initial positions: Player rotated 180 degrees (Math.PI) to face the NPC standing directly in front at (0, 0, -1.35)
     playerRootRef.current.position.set(0, 0, 0);
     playerRootRef.current.rotation.y = Math.PI;
 
-    npcRootRef.current.position.set(0, 0, -6.0); // Outside doorway
-    npcRootRef.current.rotation.y = 0; // facing +z
-
-    // Async Asset Loader Sequence
-    let isMounted = true;
+    npcRootRef.current.position.set(0, 0, -6.0);
+    npcRootRef.current.rotation.y = 0;
 
     async function initModels() {
       setLoadingPercent(30);
       setLoadingText('Loading Submissive Player Avatar (hana_v1.2_darkslave_vrm1.vrm)...');
       const pVrm = await loadPlayerVRM('hana_v1.2_darkslave_vrm1.vrm');
 
-      if (!isMounted) return;
+      if (!isMountedRef.current) return;
       setLoadingPercent(65);
       setLoadingText('Loading Dominant NPC Trainer (hana_v1.2_darkpain_vrm1.vrm)...');
       const nVrm = await loadNpcVRM('hana_v1.2_darkpain_vrm1.vrm');
 
-      if (!isMounted) return;
+      if (!isMountedRef.current) return;
       setLoadingPercent(90);
       setLoadingText('Synchronizing retargeted motion clips...');
 
-      // Preload core animations
       if (pVrm) {
         await playPlayerAnim('mixamo_idle.fbx', true);
       }
@@ -1153,18 +1222,15 @@ export const TorGameMode2: React.FC<TorGameMode2Props> = ({
       setLoadingPercent(100);
       setLoadingText('Dungeon Ready!');
 
-      setTimeout(() => {
-        if (isMounted) {
-          playCinematicIntro();
+      safeTimeout(() => {
+        if (isMountedRef.current) {
+          playCinematicIntroRef.current?.();
         }
       }, 500);
     }
 
     initModels();
 
-    // --------------------------------------------------
-    // Render & Animation Loop
-    // --------------------------------------------------
     let lastTime = performance.now();
     let rafId: number;
 
@@ -1175,9 +1241,13 @@ export const TorGameMode2: React.FC<TorGameMode2Props> = ({
       lastTime = now;
 
       // Update Survival Timer if training or punishment
-      if (gameState === 'training' || gameState === 'punishment') {
+      if (gameStateRef.current === 'training' || gameStateRef.current === 'punishment') {
         survivalTimerRef.current += dt;
-        setSurvivalTimeSec(Math.floor(survivalTimerRef.current));
+        const curSec = Math.floor(survivalTimerRef.current);
+        if (curSec !== lastSurvivalSecRef.current) {
+          lastSurvivalSecRef.current = curSec;
+          setSurvivalTimeSec(curSec);
+        }
       }
 
       // Update animation mixers
@@ -1217,18 +1287,32 @@ export const TorGameMode2: React.FC<TorGameMode2Props> = ({
       );
       camera.lookAt(targetLookAt);
 
-      // Check rhythm beat progress & miss timeout
-      if (gameState === 'training') {
+      // 60FPS High-Precision Rhythm Highway Transform Updates & Miss Checking
+      if (gameStateRef.current === 'training') {
         const elapsed = performance.now() - exerciseStartTimeRef.current;
         const activeBeats = beatsRef.current;
+        const scrollSpeedPxPerSec = 135;
 
         for (let i = 0; i < activeBeats.length; i++) {
           const beat = activeBeats[i];
+          const el = beatElementsRef.current.get(beat.id);
+          const diffMs = beat.timeMs - elapsed;
+          const offsetPx = (diffMs / 1000) * scrollSpeedPxPerSec;
+
+          if (el) {
+            if (Math.abs(offsetPx) > 500) {
+              el.style.display = 'none';
+            } else {
+              el.style.display = 'flex';
+              el.style.transform = `translateX(${offsetPx}px)`;
+            }
+          }
+
           if (beat.hitState === null && elapsed > beat.timeMs + 500) {
             beat.hitState = 'miss';
             setBeats([...activeBeats]);
             setHitFeedback({ text: 'MISSED BEAT!', color: '#ef4444', id: Date.now() });
-            executePunishment();
+            executePunishmentRef.current?.();
             break;
           }
         }
@@ -1239,7 +1323,6 @@ export const TorGameMode2: React.FC<TorGameMode2Props> = ({
 
     animate();
 
-    // Resize Handler
     const handleResize = () => {
       if (!container || !camera || !renderer) return;
       const w = container.clientWidth || window.innerWidth;
@@ -1251,12 +1334,11 @@ export const TorGameMode2: React.FC<TorGameMode2Props> = ({
     window.addEventListener('resize', handleResize);
 
     return () => {
-      isMounted = false;
       cancelAnimationFrame(rafId);
       window.removeEventListener('resize', handleResize);
       renderer.dispose();
     };
-  }, [loadPlayerVRM, loadNpcVRM, playPlayerAnim, playNpcAnim, playCinematicIntro, gameState, executePunishment]);
+  }, []); // Run ONCE on mount
 
   // ----------------------------------------------------
   // Camera Mouse Drag Listeners
@@ -1293,13 +1375,21 @@ export const TorGameMode2: React.FC<TorGameMode2Props> = ({
 
   // Restart / Try Again
   const handleRestart = async () => {
+    clearAllTimeouts();
+    clearCinematicTimers();
+
     setLives(3);
+    livesRef.current = 3;
     setRound(1);
+    roundRef.current = 1;
     survivalTimerRef.current = 0;
+    lastSurvivalSecRef.current = 0;
     setSurvivalTimeSec(0);
     setCombo(0);
     setPerfectHits(0);
-    setGameState('training');
+    setBeats([]);
+    beatsRef.current = [];
+    updateGameState('training');
 
     await loadPlayerVRM('hana_v1.2_darkslave_vrm1.vrm');
     playerRootRef.current.position.set(0, 0, 0);
@@ -1443,13 +1533,6 @@ export const TorGameMode2: React.FC<TorGameMode2Props> = ({
 
             {/* Moving Beats - Slower, generous 135px/s travel speed so moves are visible ~3.4s in advance */}
             {beats.map((beat) => {
-              const elapsed = performance.now() - exerciseStartTimeRef.current;
-              const diffMs = beat.timeMs - elapsed;
-              const scrollSpeedPxPerSec = 135; // Comfortable, relaxed speed
-              const offsetPx = (diffMs / 1000) * scrollSpeedPxPerSec;
-
-              if (Math.abs(offsetPx) > 460) return null;
-
               const dirIcons = {
                 up: <ArrowUp className="w-5 h-5 text-emerald-400" />,
                 down: <ArrowDown className="w-5 h-5 text-sky-400" />,
@@ -1469,7 +1552,13 @@ export const TorGameMode2: React.FC<TorGameMode2Props> = ({
               return (
                 <div
                   key={beat.id}
-                  style={{ transform: `translateX(${offsetPx}px)` }}
+                  ref={(el) => {
+                    if (el) {
+                      beatElementsRef.current.set(beat.id, el);
+                    } else {
+                      beatElementsRef.current.delete(beat.id);
+                    }
+                  }}
                   className={`absolute w-12 h-12 rounded-xl border-2 flex items-center justify-center shadow-lg transition-colors ${statusColor}`}
                 >
                   {dirIcons[beat.direction]}
@@ -1547,7 +1636,7 @@ export const TorGameMode2: React.FC<TorGameMode2Props> = ({
         <div className="absolute top-20 right-4 pointer-events-auto z-20">
           <button
             type="button"
-            onClick={() => startTrainingRound()}
+            onClick={skipCinematic}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-neutral-900/90 border border-[#55d2f6]/40 text-[#55d2f6] hover:bg-[#55d2f6]/20 text-xs font-bold transition-all cursor-pointer shadow-lg"
           >
             <span>Skip Cinematic</span>
