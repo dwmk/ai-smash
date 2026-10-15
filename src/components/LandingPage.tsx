@@ -1295,7 +1295,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                   />
                 </a>
                 <a
-                  href="https://peerlist.io/dmkto/project/ai-smash"
+                  href="https://peerlist.io/dmkto/project/hana"
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex items-center"

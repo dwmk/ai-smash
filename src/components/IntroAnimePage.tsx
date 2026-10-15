@@ -142,7 +142,7 @@ const ACT_SCENES: ActSceneDef[] = [
     subtitle: 'SELF-HOSTED & DECENTRALIZED SLM',
     startTime: 5.5,
     endTime: 12.0,
-    animFile: 'mixamo_argue_shrug.fbx',
+    animFile: 'mixamo_feelingshy.fbx',
     voiceLine: 'Powered entirely by local neural SLMs, in-browser WebGPU acceleration, and private self-hosted intelligence.',
     camera: {
       fromPos: [-0.65, 0.55, 1.45],
@@ -327,10 +327,15 @@ function applyFacialExpression(vrm: VRM | null, sceneIndex: number) {
     // Act 05 (spin dance): Radiant happy smile!
     em.setValue('happy', 0.85);
     em.setValue('relaxed', 0.2);
-  } else {
-    // Other times: Smug and relaxed!
+  }
+  else if (sceneIndex === 5) {
     em.setValue('relaxed', 0.7);
     em.setValue('happy', 0.18); // slight confident smirk
+  } else {
+    em.setValue('happy', 0.0);
+    em.setValue('relaxed', 0.50);
+    em.setValue('surprised', 0.0);
+    em.setValue('neutral', 0.0);
   }
   em.update();
 }
@@ -830,7 +835,7 @@ export const IntroAnimePage: React.FC<IntroAnimePageProps> = ({
         const animFiles = [
           'mixamo_wave.fbx',
           'mixamo_talking.fbx',
-          'mixamo_argue_shrug.fbx',
+          'mixamo_feelingshy.fbx',
           'mixamo_coolpoint.fbx',
           'mixamo_thankful.fbx',
           'mixamo_soulspin_dance.fbx',
