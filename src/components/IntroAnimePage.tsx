@@ -142,7 +142,7 @@ const ACT_SCENES: ActSceneDef[] = [
     subtitle: 'SELF-HOSTED & DECENTRALIZED SLM',
     startTime: 5.5,
     endTime: 12.0,
-    animFile: 'mixamo_talking.fbx',
+    animFile: 'mixamo_argue_shrug.fbx',
     voiceLine: 'Powered entirely by local neural SLMs, in-browser WebGPU acceleration, and private self-hosted intelligence.',
     camera: {
       fromPos: [-0.65, 0.55, 1.45],
@@ -161,7 +161,7 @@ const ACT_SCENES: ActSceneDef[] = [
     subtitle: 'FREEZE-FRAME OUTFIT REVOLUTION',
     startTime: 12.0,
     endTime: 19.5,
-    animFile: 'mixamo_coolpoint.fbx',
+    animFile: 'mixamo_thankful.fbx',
     voiceLine: 'With an entire wardrobe at your fingertips. Transform your style in an instant for any occasion.',
     camera: {
       fromPos: [1.1, 1.25, 1.2],
@@ -830,7 +830,9 @@ export const IntroAnimePage: React.FC<IntroAnimePageProps> = ({
         const animFiles = [
           'mixamo_wave.fbx',
           'mixamo_talking.fbx',
+          'mixamo_argue_shrug.fbx',
           'mixamo_coolpoint.fbx',
+          'mixamo_thankful.fbx',
           'mixamo_soulspin_dance.fbx',
           'mixamo_rumba_dance.fbx',
           'mixamo_idle.fbx',
@@ -1346,7 +1348,7 @@ export const IntroAnimePage: React.FC<IntroAnimePageProps> = ({
           {currentSceneIndex === 2 && (
             <div className="flex flex-col items-center text-center space-y-4 animate-in fade-in zoom-in-95 duration-200">
               <div className="px-4 py-1 bg-amber-500 text-white font-black text-xs uppercase tracking-widest transform -skew-x-12 shadow-md">
-                WARDROBE MORPH ENGINE // KEYFRAME FREEZE
+                PLENTY OF WARDROBE OUTFITS
               </div>
 
               <div
