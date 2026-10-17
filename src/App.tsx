@@ -99,7 +99,6 @@ import { VoiceTesterPage } from './components/VoiceTesterPage';
 import { MMDStudioPage } from './components/MMDStudioPage';
 import { InterviewPage } from './components/InterviewPage';
 import { CallerPage } from './components/CallerPage';
-import { TorGamePage } from './components/TorGamePage';
 import { IntroAnimePage } from './components/IntroAnimePage';
 import { PremiumModal } from './components/PremiumModal';
 import { IntegrationLibraryItem } from './constants';
@@ -2179,20 +2178,6 @@ export default function App() {
         <ActDirectorPage
           onBackToChat={() => navigateTo('/chat')}
           onNavigateHome={() => navigateTo('/')}
-        />
-      </>
-    );
-  }
-
-  // Render Secret Combat Testbed & Torment Game at '/tor'
-  if (currentRoute.startsWith('/tor')) {
-    return (
-      <>
-        {shockwaveOverlay}
-        <TorGamePage
-          onBackToChat={() => navigateTo('/chat')}
-          onNavigateHome={() => navigateTo('/')}
-          onNavigateToAct={() => navigateTo('/act')}
         />
       </>
     );
