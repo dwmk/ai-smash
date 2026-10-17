@@ -1,6 +1,6 @@
 # Hana Intelligence
 
-> A private, responsive conversational platform combining in-browser Small Language Models (SLMs), cloud AI endpoints, and an interactive 3D humanoid avatar with full-body physics. (+ more)
+> A private, responsive conversational platform combining in-browser Small Language Models (SLMs), cloud AI endpoints, and an interactive 3D humanoid avatar. (+ more)
 
 previously known as **AI Smash**.
 
