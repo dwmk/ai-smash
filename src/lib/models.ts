@@ -75,7 +75,7 @@ export const AVAILABLE_MODELS: ModelSpec[] = [
   },
   {
     id: 'muxai-ollama',
-    name: 'MuxAI Brain',
+    name: 'Makron Brain',
     tagline: 'Cloud Ollama Server',
     family: 'ollama',
     hfRepo: 'ollama/muxai',

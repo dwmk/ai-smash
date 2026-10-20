@@ -513,7 +513,7 @@ export async function streamPersonaResponse({
     return cleanedFinal;
   }
 
-  // If Cloud Ollama Model (MuxAI + Ollama or Self-hosted Ollama)
+  // If Cloud Ollama Model (Makron + Ollama or Self-hosted Ollama)
   if (model.family === 'ollama') {
     const endpointUrl = model.isCustomOllama
       ? loadCustomOllamaUrl()

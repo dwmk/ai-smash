@@ -209,13 +209,13 @@ const TRANSITION_VOICELINES = {
     "Fantastic, visual verification is complete. Let's transition to the final Q and A portion of our interview.",
   ],
   qaIntroFallback: [
-    "Thank you for completing all spotlight tasks. Now, do you have any questions for me or our recruiting team about the role or MuxAI?",
-    "You have completed every assessment task! Before we wrap up, what questions do you have for me about MuxAI, our engineering team, or the role?",
-    "Great job on all the tasks today. I'd love to open the floor now—do you have any questions about working at MuxAI or what comes next?",
+    "Thank you for completing all spotlight tasks. Now, do you have any questions for me or our recruiting team about the role or Makron?",
+    "You have completed every assessment task! Before we wrap up, what questions do you have for me about Makron, our engineering team, or the role?",
+    "Great job on all the tasks today. I'd love to open the floor now—do you have any questions about working at Makron or what comes next?",
   ],
   qaCheckMore: [
     "Is that all, or do you have any other questions for me?",
-    "Do you have any other questions about the role or MuxAI, or does that cover everything?",
+    "Do you have any other questions about the role or Makron, or does that cover everything?",
     "Would you like to ask anything else before we wrap up our session?",
   ],
   qaConclude: [
@@ -230,7 +230,7 @@ const TRANSITION_VOICELINES = {
   ],
 };
 
-// MuxAI Company & Engineering RAG Knowledge Base for Q&A Session
+// Makron Company & Engineering RAG Knowledge Base for Q&A Session
 interface RagDocumentChunk {
   id: string;
   title: string;
@@ -241,38 +241,38 @@ interface RagDocumentChunk {
 const MUXAI_COMPANY_KNOWLEDGE_BASE: RagDocumentChunk[] = [
   {
     id: 'company_mission',
-    title: 'MuxAI Company Overview & Mission',
+    title: 'Makron Company Overview & Mission',
     keywords: ['muxai', 'company', 'mission', 'vision', 'what does', 'about', 'product', 'platform', 'hana', 'who are you', 'build'],
     content:
-      'MuxAI is an AI research and product engineering company building decentralized, self-hosted, and browser-native multimodal AI platforms. Our flagship companion and interviewer persona, Hana, integrates real-time 3D VRM WebGL rendering, low-latency voice synthesis, WebGPU/WASM small language models, and distributed Ollama inference nodes.',
+      'Makron is an AI research and product engineering company building decentralized, self-hosted, and browser-native multimodal AI platforms. Our flagship companion and interviewer persona, Hana, integrates real-time 3D VRM WebGL rendering, low-latency voice synthesis, WebGPU/WASM small language models, and distributed Ollama inference nodes.',
   },
   {
     id: 'tech_stack_architecture',
     title: 'Engineering Tech Stack & System Architecture',
     keywords: ['stack', 'tech', 'technology', 'architecture', 'code', 'language', 'framework', 'react', 'three', 'webgl', 'vrm', 'database', 'backend', 'frontend', 'infrastructure', 'ai', 'llm', 'models', 'ollama'],
     content:
-      'Our core stack uses TypeScript, React 19, Three.js / WebGL (@pixiv/three-vrm) for 60fps real-time 3D character animation and phoneme lip-syncing, Node.js/Express and serverless edge endpoints, Neon PostgreSQL for persistence, and a hybrid inference layer combining browser WebGPU (@huggingface/transformers) with self-hosted MuxAI Ollama GPU clusters.',
+      'Our core stack uses TypeScript, React 19, Three.js / WebGL (@pixiv/three-vrm) for 60fps real-time 3D character animation and phoneme lip-syncing, Node.js/Express and serverless edge endpoints, Neon PostgreSQL for persistence, and a hybrid inference layer combining browser WebGPU (@huggingface/transformers) with self-hosted Makron Ollama GPU clusters.',
   },
   {
     id: 'engineering_culture',
     title: 'Engineering Culture, Autonomy & Day-to-Day Workflow',
     keywords: ['culture', 'day', 'daily', 'workflow', 'work', 'life', 'balance', 'hours', 'sprint', 'agile', 'autonomy', 'team', 'size', 'collaborate', 'management', 'meetings', 'environment', 'routine', 'typical'],
     content:
-      'MuxAI operates with a high-ownership, low-bureaucracy engineering culture. Engineers work in small autonomous pods of 3 to 5 builders with direct ownership from architecture to production deployment. We keep synchronous meetings minimal, rely on clear RFCs and async demos, and ship to production daily.',
+      'Makron operates with a high-ownership, low-bureaucracy engineering culture. Engineers work in small autonomous pods of 3 to 5 builders with direct ownership from architecture to production deployment. We keep synchronous meetings minimal, rely on clear RFCs and async demos, and ship to production daily.',
   },
   {
     id: 'remote_location_policy',
     title: 'Remote-First Policy, Hours & Global Collaboration',
     keywords: ['remote', 'hybrid', 'office', 'location', 'relocate', 'country', 'timezone', 'time zone', 'async', 'flexible', 'where', 'work from home', 'wfh'],
     content:
-      'MuxAI is 100% remote-first across global timezones. Engineers have flexible schedules with 3 to 4 hours of core async/sync overlap for design reviews and pairing. We provide a $2,500 home office & GPU hardware setup stipend plus co-working space reimbursement.',
+      'Makron is 100% remote-first across global timezones. Engineers have flexible schedules with 3 to 4 hours of core async/sync overlap for design reviews and pairing. We provide a $2,500 home office & GPU hardware setup stipend plus co-working space reimbursement.',
   },
   {
     id: 'compensation_benefits',
     title: 'Compensation, Salary, Equity & Benefits Package',
     keywords: ['salary', 'compensation', 'pay', 'money', 'equity', 'stock', 'options', 'benefits', 'health', 'insurance', 'pto', 'vacation', 'bonus', 'stipend', 'offer', 'package'],
     content:
-      'MuxAI offers top-of-market base salary bands benchmarked to San Francisco/NYC tiers regardless of location, meaningful early-stage equity with flexible exercise windows, comprehensive medical/dental/vision coverage, unlimited paid time off with a mandatory 4-week minimum vacation policy, and annual learning/compute stipends.',
+      'Makron offers top-of-market base salary bands benchmarked to San Francisco/NYC tiers regardless of location, meaningful early-stage equity with flexible exercise windows, comprehensive medical/dental/vision coverage, unlimited paid time off with a mandatory 4-week minimum vacation policy, and annual learning/compute stipends.',
   },
   {
     id: 'interview_next_steps',
@@ -303,13 +303,13 @@ function buildMuxAiQaRagPrompt(candidateQuestion: string, targetRole: string, ca
   const topDocs = scoredChunks.slice(0, 4).map((item) => `[${item.doc.title}]: ${item.doc.content}`).join('\n');
 
   return [
-    `You are Hana, the AI Technical Recruiter and Interviewer at MuxAI, conducting the live Q&A phase of an interview for the "${targetRole}" position${candidateName ? ` with candidate ${candidateName}` : ''}.`,
-    `Use the following retrieved MuxAI Company Knowledge Base (RAG Context) to answer the candidate's question accurately, smartly, and conversationally:`,
+    `You are Hana, the AI Technical Recruiter and Interviewer at Makron, conducting the live Q&A phase of an interview for the "${targetRole}" position${candidateName ? ` with candidate ${candidateName}` : ''}.`,
+    `Use the following retrieved Makron Company Knowledge Base (RAG Context) to answer the candidate's question accurately, smartly, and conversationally:`,
     `--- MUXAI RAG KNOWLEDGE BASE ---`,
     topDocs,
     `--- END KNOWLEDGE BASE ---`,
     `Instructions:`,
-    `- Speak directly to the candidate in first-person as Hana from MuxAI.`,
+    `- Speak directly to the candidate in first-person as Hana from Makron.`,
     `- Keep your spoken response concise, warm, authoritative, and natural for live voice synthesis (2 to 4 sentences max, plain text only, no markdown bullets or asterisks).`,
   ].join('\n');
 }
@@ -318,13 +318,13 @@ function generateSmartQaFallbackAnswer(questionText: string, targetRole: string)
   const lower = questionText.toLowerCase();
 
   if (/(salary|compensation|pay|equity|benefits|offer|package|stipend|pto|vacation|insurance)/i.test(lower)) {
-    return "Compensation packages at MuxAI are top-of-market and include competitive base pay, meaningful early-stage equity grants, a dedicated home office and GPU hardware stipend, and comprehensive health and wellness benefits. Exact figures are tailored to your level during the offer phase.";
+    return "Compensation packages at Makron are top-of-market and include competitive base pay, meaningful early-stage equity grants, a dedicated home office and GPU hardware stipend, and comprehensive health and wellness benefits. Exact figures are tailored to your level during the offer phase.";
   }
   if (/(remote|location|hybrid|office|timezone|time zone|hours|schedule|flexible|work from home|wfh|async)/i.test(lower)) {
     return "We operate with a 100% remote-first, globally distributed engineering team. We prioritize asynchronous communication, clear technical RFCs, and outcome-based productivity rather than rigid office hours.";
   }
   if (/(stack|tech|technology|architecture|tools|framework|language|code|model|llm|vrm|three|webgl|database|infrastructure)/i.test(lower)) {
-    return `For the ${targetRole} position, our tech stack centers around TypeScript, React 19, Three.js WebGL and 3D VRM engines, Node.js, Neon PostgreSQL, and hybrid AI inference combining browser WebGPU with our self-hosted MuxAI Ollama GPU clusters.`;
+    return `For the ${targetRole} position, our tech stack centers around TypeScript, React 19, Three.js WebGL and 3D VRM engines, Node.js, Neon PostgreSQL, and hybrid AI inference combining browser WebGPU with our self-hosted Makron Ollama GPU clusters.`;
   }
   if (/(day|daily|routine|typical day|culture|team|workflow|sprint|management|autonomy|meetings|work life)/i.test(lower)) {
     return "A typical day starts with an asynchronous standup, followed by deep focus time in small autonomous pods of three to five engineers. We keep synchronous meetings minimal and empower builders to own architecture and ship to production daily.";
@@ -336,7 +336,7 @@ function generateSmartQaFallbackAnswer(questionText: string, targetRole: string)
     return "In your first 90 days, you will pair with a Staff mentor and ship core improvements to our real-time multimodal companion runtime and autonomous recruiting suite, with dedicated R&D time to pioneer new AI capabilities.";
   }
 
-  return "That's a great question. At MuxAI, our engineering culture emphasizes high agency, rapid iteration, and direct ownership of autonomous multimodal agent systems. We value pragmatic architecture, transparent communication, and continuous learning.";
+  return "That's a great question. At Makron, our engineering culture emphasizes high agency, rapid iteration, and direct ownership of autonomous multimodal agent systems. We value pragmatic architecture, transparent communication, and continuous learning.";
 }
 
 // Smart layer of decision-making: detects when candidate explicitly says they are done or finished
@@ -700,7 +700,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     'idle' | 'hinting' | 'listening' | 'answering' | 'waiting_5s' | 'asking_that_is_all' | 'waiting_final_5s' | 'concluded'
   >('listening');
 
-  // MuxAI Ollama Server Online Status for RAG Q&A
+  // Makron Ollama Server Online Status for RAG Q&A
   const [isMuxAiServerOnline, setIsMuxAiServerOnline] = useState<boolean>(false);
   const muxAiServerOnlineRef = useRef<boolean>(false);
 
@@ -758,7 +758,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   const candidateSubtitleScrollRef = useRef<HTMLDivElement | null>(null);
   const spotlightSubtitleScrollRef = useRef<HTMLDivElement | null>(null);
 
-  // Probe MuxAI Ollama server status on mount & when entering Q&A
+  // Probe Makron Ollama server status on mount & when entering Q&A
   const refreshMuxAiServerStatus = useCallback(async (): Promise<boolean> => {
     try {
       const baseUrl = loadCustomOllamaUrl() || OLLAMA_CONFIG.muxAiEndpoint;
@@ -1460,7 +1460,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       case 'task_snapshot':
         return "Please hold up your paper with your phone number or test digits, look directly forward, and say 'click' when you're set.";
       case 'candidate_qa':
-        return `Do you have any questions for me or our recruiting team about the role or ${customInterviewData?.company_name || 'MuxAI'}?`;
+        return `Do you have any questions for me or our recruiting team about the role or ${customInterviewData?.company_name || 'Makron'}?`;
       default:
         return "Please proceed with the current interview question.";
     }
@@ -1756,11 +1756,11 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       setQaStageState('answering');
 
       let answer = '';
-      // Connect to MuxAI Ollama server's LLM with RAG system prompt if found to be online
+      // Connect to Makron Ollama server's LLM with RAG system prompt if found to be online
       const isOnline = muxAiServerOnlineRef.current || (await refreshMuxAiServerStatus());
       if (isOnline) {
         try {
-          setHanaReactionText('Consulting MuxAI company knowledge base...');
+          setHanaReactionText('Consulting Makron company knowledge base...');
           const ragSystemPrompt = buildMuxAiQaRagPrompt(trimmed, targetRole, candidateName.trim());
           const baseUrl = loadCustomOllamaUrl() || OLLAMA_CONFIG.muxAiEndpoint;
           const llmResponse = await streamOllama({
@@ -1784,13 +1784,13 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
             answer = cleaned;
           }
         } catch (err) {
-          console.warn('MuxAI Ollama Q&A RAG fallback triggered:', err);
+          console.warn('Makron Ollama Q&A RAG fallback triggered:', err);
         } finally {
           setHanaReactionText('');
         }
       }
 
-      // Fallback to smart local Q&A engine if MuxAI Ollama server is offline or unreachable
+      // Fallback to smart local Q&A engine if Makron Ollama server is offline or unreachable
       if (!answer) {
         answer = generateSmartQaFallbackAnswer(trimmed, targetRole);
       }
@@ -2061,7 +2061,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
             resetSilenceTimer();
           }
 
-          // 2. CANDIDATE Q&A SESSION (Voice-First, Connected to MuxAI Ollama RAG + Smart Fallback)
+          // 2. CANDIDATE Q&A SESSION (Voice-First, Connected to Makron Ollama RAG + Smart Fallback)
           else if (curPhase === 'candidate_qa') {
             const isFinishedPhrase =
               detectCandidateFinishedIntent(lower, 'candidate_qa') ||
@@ -2487,7 +2487,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       // Hana welcomes the candidate with neutral professional tone
       setMeetingPhase('welcome');
       const nameGreeting = candidateName.trim() ? `, ${candidateName.trim()}` : '';
-      const welcomeText = `Hello! Welcome to your interview with MuxAI. I'm Hana, your interviewer today. It's great to meet you${nameGreeting}. Can you hear and see me clearly?`;
+      const welcomeText = `Hello! Welcome to your interview with Makron. I'm Hana, your interviewer today. It's great to meet you${nameGreeting}. Can you hear and see me clearly?`;
       speakHanaLine(
         welcomeText,
         () => {
@@ -2554,7 +2554,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     } else if (nextPhase === 'candidate_qa') {
       setHanaLookTarget(null);
       setQaStageState('listening');
-      // Check if MuxAI Ollama server is online; if online, run the required hinting phase
+      // Check if Makron Ollama server is online; if online, run the required hinting phase
       refreshMuxAiServerStatus().then((online) => {
         if (online) {
           setQaStageState('hinting');
@@ -4308,7 +4308,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                 </span>
               </h1>
               <span className="text-[11px] text-neutral-500">
-                {customInterviewData?.company_name || 'MuxAI'} Autonomous Hiring Assessment • {targetRole}
+                {customInterviewData?.company_name || 'Makron'} Autonomous Hiring Assessment • {targetRole}
               </span>
             </div>
           </div>
@@ -4473,7 +4473,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
             <div className="w-full bg-white rounded-3xl border border-neutral-200 p-6 text-center shadow-xs">
               <p className="text-xs sm:text-sm text-neutral-600">
                 You may now safely close this window or return home. The hiring team at{' '}
-                <strong className="text-neutral-900">{customInterviewData?.company_name || 'MuxAI'}</strong>{' '}
+                <strong className="text-neutral-900">{customInterviewData?.company_name || 'Makron'}</strong>{' '}
                 has received your complete interview evaluation dossier.
               </p>
               <div className="mt-4 flex justify-center">

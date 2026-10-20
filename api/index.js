@@ -122,7 +122,7 @@ function deriveDefaultProfileFromEmail(email) {
     cleanUsername.charAt(0).toUpperCase() + cleanUsername.slice(1).replace(/[._-]+/g, ' ');
   return {
     username: cleanUsername,
-    displayName: displayName || 'MuxAI User',
+    displayName: displayName || 'Makron User',
   };
 }
 
@@ -290,7 +290,7 @@ CREATE TABLE IF NOT EXISTS interviews (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
   target_role TEXT NOT NULL,
-  company_name TEXT NOT NULL DEFAULT 'MuxAI',
+  company_name TEXT NOT NULL DEFAULT 'Makron',
   description TEXT,
   created_by_user_id INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
   created_by_email TEXT,
@@ -828,7 +828,7 @@ const DEFAULT_DEMO_INTERVIEW = {
   id: 'demo',
   title: 'Senior Full Stack & AI Systems Engineer',
   target_role: 'Senior Full Stack & AI Systems Engineer',
-  company_name: 'MuxAI',
+  company_name: 'Makron',
   description: 'Autonomous technical screening with Hana covering core engineering background, complex architecture, written reflection, situational performance, and interactive Q&A.',
   created_by_user_id: null,
   created_by_email: 'recruiting@muxai.com',
@@ -898,7 +898,7 @@ async function createInterviewInDb(interview) {
           interview.id,
           interview.title,
           interview.target_role,
-          interview.company_name || 'MuxAI',
+          interview.company_name || 'Makron',
           interview.description || '',
           interview.created_by_user_id || null,
           interview.created_by_email || null,
@@ -2005,7 +2005,7 @@ router.post('/interview/create', async (req, res) => {
       id,
       title: String(body.title).trim(),
       target_role: String(body.target_role).trim(),
-      company_name: String(body.company_name || 'MuxAI').trim(),
+      company_name: String(body.company_name || 'Makron').trim(),
       description: String(body.description || '').trim(),
       created_by_user_id: body.created_by_user_id ? Number(body.created_by_user_id) : null,
       created_by_email: body.created_by_email ? String(body.created_by_email).trim() : null,
@@ -3156,7 +3156,7 @@ const graphqlRoot = {
       { id: 'smollm2-135m', name: 'Tiny Brain', tagline: '135M params', family: 'browser-slm', description: 'Runs 100% in browser', speedRating: 'Ultra-Fast', inferenceType: 'in-browser-onnx', streamingEndpoint: 'client-transformers-js' },
       { id: 'llama-3.2-1b', name: 'Meta Brain', tagline: '1.2B params', family: 'browser-slm', description: 'Meta Llama 3.2 lightweight reasoning', speedRating: 'Fast', inferenceType: 'in-browser-onnx', streamingEndpoint: 'client-transformers-js' },
       { id: 'gemini-api', name: 'Gemini API', tagline: 'Cloud model', family: 'cloud-api', description: 'Google Gemini 2.5 Flash', speedRating: 'Real-time', inferenceType: 'cloud-api', streamingEndpoint: '/api/chat' },
-      { id: 'muxai-ollama', name: 'MuxAI Brain', tagline: 'Self-hosted', family: 'ollama', description: 'Decentralized Ollama runner', speedRating: 'Fast', inferenceType: 'ollama-server', streamingEndpoint: '/api/ollama/chat' },
+      { id: 'muxai-ollama', name: 'Makron Brain', tagline: 'Self-hosted', family: 'ollama', description: 'Decentralized Ollama runner', speedRating: 'Fast', inferenceType: 'ollama-server', streamingEndpoint: '/api/ollama/chat' },
     ];
     if (modelId) {
       return list.filter((m) => m.id === modelId);

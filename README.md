@@ -6,7 +6,7 @@ previously known as **AI Smash**.
 
 ![](https://muxai.vercel.app/aismash_banner.png)
 
-based on a derivative of the [MuxAI](https://github.com/muxai/muxai-platform) platform.
+based on a derivative of the [Makron](https://github.com/muxai/muxai-platform) platform.
 
 ## Active web versions
 - [[🌐 Live deployment]](https://aismash.web.app)
@@ -75,7 +75,7 @@ edge-ai-platform/
 │   │   ├── ModelSelector.tsx    # Drop-up menu for in-browser SLMs and cloud/local Ollama models
 │   │   ├── SearchBar.tsx        # In-conversation search and message filter modal
 │   │   ├── SettingsModal.tsx    # Hardware acceleration preferences & browser storage manager
-│   │   ├── Sidebar.tsx          # Conversation sessions, MuxAI account auth, and storage drawer
+│   │   ├── Sidebar.tsx          # Conversation sessions, Makron account auth, and storage drawer
 │   │   ├── SplashScreen.tsx     # Startup brand intro screen with auto-dismiss
 │   │   ├── TelemetryBar.tsx     # Real-time hardware compute, speed, and latency status bar
 │   │   ├── ThemeSidebar.tsx     # Themes & live 3D wardrobe portrait gallery
@@ -122,7 +122,7 @@ The full-stack Express server (`server.ts`) exposes production-ready endpoints s
 | `POST` | `/api/chat/provider` | Universal multi-provider LLM streaming proxy supporting external keys for OpenAI, Anthropic Claude, xAI, Groq, DeepSeek, Z.ai, Qwen, and Hugging Face. |
 | `POST` | `/api/emotion` | **Full-Message Emotion Classifier**: Analyzes the entire completed AI response (evaluating overall sentiment, tone, and lexical density across all sentences) to determine the 3D avatar's facial expression using a pure algorithm (zero Gemini/LLM usage) to return `"happy"` (relaxed eyes, mouth slightly open), `"smug"` (relaxed smirk), `"sad"`, `"angry"`, `"surprised"`, or `"neutral"`. |
 
-### 2. MuxAI Humanizer & Turnitin-Reverse Engine (`/humanizer`)
+### 2. Makron Humanizer & Turnitin-Reverse Engine (`/humanizer`)
 - **Route URLs**: `/humanizer`, with automatic redirects from `/ai-detector`, `/ai-detect`, and `/humanize`.
 - **Purpose**: A Turnitin-style split-view AI detection and text humanizer. Defeats Turnitin, GPTZero, and CopyLeaks by elevating sentence burstiness, eradicating machine clichés (e.g., "delve into", "testament to", "crucial role"), and injecting natural syntactic rhythm.
 - **Engines**: Defaults to the instant, zero-LLM Turnitin-Reverse Algorithm, with model selection supporting in-browser SLMs and cloud models (reusing `/chat`'s submodel and API key selectors).
@@ -217,7 +217,7 @@ The full-stack Express server (`server.ts`) exposes production-ready endpoints s
 AI Smash provides an optional, privacy-respecting account system:
 
 - **Optional by Design**: All core features—including 3D rendering, offline SLMs, sound synthesis, and local conversation history—work completely without creating an account.
-- **Encrypted Session Sync**: When logged into a MuxAI account, conversations and custom themes are synced automatically to serverless NeonDB PostgreSQL with debounced state synchronization.
+- **Encrypted Session Sync**: When logged into a Makron account, conversations and custom themes are synced automatically to serverless NeonDB PostgreSQL with debounced state synchronization.
 - **Profile Customization**: Users can personalize display names, handles, avatars, and redeem access codes for premium outfit tiers.
 
 ---

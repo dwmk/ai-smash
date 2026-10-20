@@ -1551,7 +1551,7 @@ export default function App() {
             activeModelName: modelToActivate.name,
             modelId: modelToActivate.id,
             device: 'ollama',
-            statusText: `Connected to MuxAI Ollama (${detected})`,
+            statusText: `Connected to Makron Ollama (${detected})`,
           }));
         }
       } else {
@@ -2265,7 +2265,7 @@ export default function App() {
     );
   }
 
-  // Render MuxAI Humanizer & Turnitin-Reverse at '/humanizer' (and redirects)
+  // Render Makron Humanizer & Turnitin-Reverse at '/humanizer' (and redirects)
   if (currentRoute.startsWith('/humanizer')) {
     return (
       <>
@@ -2320,7 +2320,7 @@ export default function App() {
 
           <div className="space-y-4 text-sm sm:text-base text-neutral-300 leading-relaxed text-left bg-black/25 p-5 rounded-2xl border border-white/[0.06]">
             <p className="font-semibold text-white">
-              MuxAI has detected indecent behavior from you, for which you are temporarily banned from talking to {AI_PROFILE.name}.
+              Makron has detected indecent behavior from you, for which you are temporarily banned from talking to {AI_PROFILE.name}.
             </p>
             <p className="text-neutral-300">
               The duration to wait will increase if you continue doing this in the future
@@ -2329,7 +2329,7 @@ export default function App() {
               Trying to reset this by clearing cache will also clear all your conversations and delete downloaded AI models. Do it at your own risk!
             </p>
             <p className="text-neutral-400 text-xs sm:text-sm border-t border-white/[0.08] pt-3">
-              MuxAI does not monitor your usage of this platform but there are built-in detection systems that may trigger alerts in case of highly illegal or inappropriate activities. Be warned!
+              Makron does not monitor your usage of this platform but there are built-in detection systems that may trigger alerts in case of highly illegal or inappropriate activities. Be warned!
             </p>
           </div>
 

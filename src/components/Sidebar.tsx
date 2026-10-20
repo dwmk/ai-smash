@@ -560,7 +560,7 @@ const SidebarComponent: React.FC<SidebarProps> = ({
                   <div className="flex items-center justify-between gap-2">
                     <span className="inline-flex items-center gap-1.5 font-semibold text-neutral-800 dark:text-neutral-200">
                       <Crown className="w-3.5 h-3.5 text-amber-500" />
-                      <span>MuxAI Account</span>
+                      <span>Makron Account</span>
                     </span>
                     <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 font-semibold">
                       Optional
@@ -653,7 +653,7 @@ const SidebarComponent: React.FC<SidebarProps> = ({
                   target="_blank"
                   rel="noopener noreferrer"
                   className={`text-[10px] font-mono text-neutral-400 dark:text-neutral-500 ${THEME_COLORS.tokens.accentTextHover} transition-colors`}
-                  title="Visit MuxAI"
+                  title="Visit Makron"
                 >
                   {APP_INFO.copyright}
                 </a>

@@ -308,7 +308,7 @@ CREATE TABLE IF NOT EXISTS interviews (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
   target_role TEXT NOT NULL,
-  company_name TEXT NOT NULL DEFAULT 'MuxAI',
+  company_name TEXT NOT NULL DEFAULT 'Makron',
   description TEXT,
   created_by_user_id INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
   created_by_email TEXT,
@@ -386,7 +386,7 @@ function deriveDefaultProfileFromEmail(email: string) {
     cleanUsername.charAt(0).toUpperCase() + cleanUsername.slice(1).replace(/[._-]+/g, ' ');
   return {
     username: cleanUsername,
-    displayName: displayName || 'MuxAI User',
+    displayName: displayName || 'Makron User',
   };
 }
 
@@ -1086,7 +1086,7 @@ export const DEFAULT_DEMO_INTERVIEW: InterviewRecord = {
   id: 'demo',
   title: 'Senior Full Stack & AI Systems Engineer',
   target_role: 'Senior Full Stack & AI Systems Engineer',
-  company_name: 'MuxAI',
+  company_name: 'Makron',
   description: 'Autonomous technical screening with Hana covering core engineering background, complex architecture, written reflection, situational performance, and interactive Q&A.',
   created_by_user_id: null,
   created_by_email: 'recruiting@muxai.com',
@@ -1156,7 +1156,7 @@ export async function createInterviewInDb(interview: InterviewRecord): Promise<I
           interview.id,
           interview.title,
           interview.target_role,
-          interview.company_name || 'MuxAI',
+          interview.company_name || 'Makron',
           interview.description || '',
           interview.created_by_user_id || null,
           interview.created_by_email || null,

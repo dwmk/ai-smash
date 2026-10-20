@@ -229,16 +229,16 @@ Available Dinner Slots:
     id: 'sales',
     name: 'SaaS Demo',
     outboundGreeting:
-      'Hello! This is Hana calling from MuxAI Technologies regarding your platform inquiry. Do you have a minute to chat or schedule a live demo?',
+      'Hello! This is Hana calling from Makron Technologies regarding your platform inquiry. Do you have a minute to chat or schedule a live demo?',
     inboundGreeting:
-      'Thank you for calling MuxAI! This is Hana. Are you looking for pricing details or to schedule a live demo?',
+      'Thank you for calling Makron! This is Hana. Are you looking for pricing details or to schedule a live demo?',
     quickPhrases: [
       'How much is the Professional plan vs Starter?',
       'Do you support self-hosted on-premise deployment?',
       'Schedule a demo for Thursday at 2:00 PM.',
     ],
     content: `[SAAS SALES RAG KNOWLEDGE BASE]
-Company: MuxAI Technologies
+Company: Makron Technologies
 Product: Self-Hosted AI Voice & Agent Runtime.
 Pricing:
 - Starter: $49/mo (1 line, live RAG editor)

@@ -526,8 +526,8 @@ export const THEME_COLORS = {
 export const APP_INFO = {
   name: 'Hana',
   tagline: 'Direct Message',
-  author: 'MuxAI',
-  copyright: '© MuxAI 2026',
+  author: 'Makron',
+  copyright: '© Makron 2026',
   storageKeys: {
     theme: 'aismash_theme',
     activeTheme: 'aismash_active_theme_id',
@@ -550,7 +550,7 @@ export const SPECIAL_THANKS_LINKS = [
   {
     name: 'Dewan Mukto',
     url: 'https://dewanmukto.github.io/',
-    description: 'creator of MuxAI and Hana (OC)',
+    description: 'creator of Makron and Hana (OC)',
   },
   {
     name: 'VRoid Studio',
@@ -1180,7 +1180,7 @@ export const UI_CONFIG = {
 // =====================================================================
 export const SPLASH_CONFIG = {
   logoUrl: 'https://muxai.vercel.app/logo0.png',
-  title: 'MuxAI',
+  title: 'Makron',
   subtitle: 'Initializing voice engine & character...',
   footerLinks: [
     { label: 'MuxAI', url: 'https://muxai.vercel.app' },

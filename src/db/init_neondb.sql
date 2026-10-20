@@ -140,7 +140,7 @@ CREATE TABLE IF NOT EXISTS interviews (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
   target_role TEXT NOT NULL,
-  company_name TEXT NOT NULL DEFAULT 'MuxAI',
+  company_name TEXT NOT NULL DEFAULT 'Makron',
   description TEXT,
   created_by_user_id INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
   created_by_email TEXT,

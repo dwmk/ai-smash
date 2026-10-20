@@ -260,7 +260,7 @@ export const InterviewDashboard: React.FC<InterviewDashboardProps> = ({
   // Designer Form State
   const [designerTitle, setDesignerTitle] = useState<string>('');
   const [designerRole, setDesignerRole] = useState<string>('');
-  const [designerCompany, setDesignerCompany] = useState<string>('MuxAI');
+  const [designerCompany, setDesignerCompany] = useState<string>('Makron');
   const [designerDescription, setDesignerDescription] = useState<string>('');
   const [designerRequireResume, setDesignerRequireResume] = useState<boolean>(true);
   const [designerRequireWritten, setDesignerRequireWritten] = useState<boolean>(true);
@@ -400,7 +400,7 @@ export const InterviewDashboard: React.FC<InterviewDashboardProps> = ({
     setPublishedInterview(null);
     setDesignerTitle('');
     setDesignerRole('');
-    setDesignerCompany(accountUser?.username ? `${accountUser.username} Labs` : 'MuxAI');
+    setDesignerCompany(accountUser?.username ? `${accountUser.username} Labs` : 'Makron');
     setDesignerDescription('Autonomous screening with Hana');
     setShowDesignerModal(true);
   };
@@ -479,7 +479,7 @@ export const InterviewDashboard: React.FC<InterviewDashboardProps> = ({
         id: generatedId,
         title: designerTitle.trim(),
         target_role: designerRole.trim(),
-        company_name: designerCompany.trim() || 'MuxAI',
+        company_name: designerCompany.trim() || 'Makron',
         description: designerDescription.trim(),
         created_by_user_id: accountUser?.id || null,
         created_by_email: accountUser?.email || null,
@@ -1318,7 +1318,7 @@ export const InterviewDashboard: React.FC<InterviewDashboardProps> = ({
                       type="text"
                       value={designerCompany}
                       onChange={(e) => setDesignerCompany(e.target.value)}
-                      placeholder="e.g. MuxAI Labs"
+                      placeholder="e.g. Makron Labs"
                       className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-50 border border-neutral-300 text-xs text-neutral-900 focus:outline-none focus:border-sky-500"
                     />
                   </div>

@@ -71,7 +71,7 @@ export const LandingNavbar: React.FC<LandingNavbarProps> = ({
             />
             <div>
               <span className="font-bold text-lg tracking-tight font-heading block leading-none">
-                MuxAI <span className="text-[var(--theme-accent,#0f9bc7)]">Hana</span>
+                Makron <span className="text-[var(--theme-accent,#0f9bc7)]">Hana</span>
               </span>
             </div>
           </div>
@@ -182,7 +182,7 @@ export const LandingNavbar: React.FC<LandingNavbarProps> = ({
                   }}
                 />
                 <span className="font-bold text-base tracking-tight font-heading">
-                  MuxAI <span className="text-[var(--theme-accent,#0f9bc7)]">Hana</span>
+                  Makron <span className="text-[var(--theme-accent,#0f9bc7)]">Hana</span>
                 </span>
               </div>
               <button

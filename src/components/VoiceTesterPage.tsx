@@ -41,7 +41,7 @@ interface LogEntry {
 const PRESET_TEST_TEXTS = [
   {
     label: 'Hana Greeting',
-    text: "Hello! I am Hana, your AI companion. This is a voice test for the MuxAI speech synthesis audio engine.",
+    text: "Hello! I am Hana, your AI companion. This is a voice test for the Makron speech synthesis audio engine.",
   },
   {
     label: 'Casual Chat',
@@ -71,7 +71,7 @@ export const VoiceTesterPage: React.FC<VoiceTesterPageProps> = ({
   const [isSupported, setIsSupported] = useState<boolean>(true);
   const [selectedPackName, setSelectedPackName] = useState<string>('');
   const [inputText, setInputText] = useState<string>(
-    "Hello! I am Hana, your AI companion. This is a voice test for the MuxAI speech synthesis audio engine."
+    "Hello! I am Hana, your AI companion. This is a voice test for the Makron speech synthesis audio engine."
   );
 
   // Engine parameters

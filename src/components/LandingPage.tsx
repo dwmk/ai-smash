@@ -1391,14 +1391,14 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 hover:text-neutral-900 font-medium transition-colors"
-              title="MuxAI on LinkedIn"
+              title="Makron on LinkedIn"
             >
               <Linkedin className="w-4 h-4 text-blue-600" />
               <span>LinkedIn</span>
             </a>
 
             <a
-              href="https://github.com/MuxAI/hana.ai"
+              href="https://github.com/Makron/hana.ai"
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 hover:text-neutral-900 font-medium transition-colors"
@@ -1418,7 +1418,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               rel="noopener noreferrer"
               className="hover:text-neutral-700 hover:underline transition-colors"
             >
-              MuxAI
+              Makron
             </a>
             . Hana Intelligence.
           </div>

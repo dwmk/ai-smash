@@ -1487,7 +1487,7 @@ export const IntroAnimePage: React.FC<IntroAnimePageProps> = ({
           {currentSceneIndex === 5 && (
             <div className="flex flex-col items-center text-center space-y-5 animate-in fade-in zoom-in-90 duration-300 pointer-events-none">
               <div className="px-5 py-1.5 bg-[#e11d48] text-white font-black text-sm tracking-widest uppercase transform -skew-x-12 border-2 border-white shadow-xl">
-                MuxAI
+                Makron
               </div>
 
               <h1

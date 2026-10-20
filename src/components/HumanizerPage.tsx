@@ -180,7 +180,7 @@ export const HumanizerPage: React.FC<HumanizerPageProps> = ({
       timeGreeting = 'Good evening!';
     }
 
-    const greetingLine = `${timeGreeting} Welcome to MuxAI Humanizer. I am Hana. Let's check your work and see if we can make it sound human.`;
+    const greetingLine = `${timeGreeting} Welcome to Makron Humanizer. I am Hana. Let's check your work and see if we can make it sound human.`;
 
     const timer = setTimeout(() => {
       queueVoiceLine(greetingLine);
@@ -325,8 +325,8 @@ export const HumanizerPage: React.FC<HumanizerPageProps> = ({
     if (!result) return;
     const header =
       '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">' +
-      '<head><meta charset="utf-8"><title>MuxAI Humanized Document</title><style>body{font-family:Calibri,sans-serif;line-height:1.6;font-size:12pt;}h1{color:#1e2029;font-size:16pt;border-bottom:1px solid #ccc;padding-bottom:6px;}</style></head><body>' +
-      '<h1>Humanized Document — MuxAI AI Detector & Humanizer</h1>' +
+      '<head><meta charset="utf-8"><title>Makron Humanized Document</title><style>body{font-family:Calibri,sans-serif;line-height:1.6;font-size:12pt;}h1{color:#1e2029;font-size:16pt;border-bottom:1px solid #ccc;padding-bottom:6px;}</style></head><body>' +
+      '<h1>Humanized Document — Makron AI Detector & Humanizer</h1>' +
       `<p><em>AI Detection Score: ${result.humanizedText.aiPercentage}% AI</em></p><hr/>` +
       `<p>${result.rawHumanizedText.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br/>')}</p>` +
       '</body></html>';
@@ -350,7 +350,7 @@ export const HumanizerPage: React.FC<HumanizerPageProps> = ({
       <!DOCTYPE html>
       <html>
         <head>
-          <title>Humanized Document - MuxAI</title>
+          <title>Humanized Document - Makron</title>
           <style>
             body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 40px; color: #1e2029; line-height: 1.7; font-size: 14px; }
             .header { border-bottom: 2px solid #55d2f6; padding-bottom: 12px; margin-bottom: 24px; }
@@ -361,11 +361,11 @@ export const HumanizerPage: React.FC<HumanizerPageProps> = ({
         </head>
         <body>
           <div class="header">
-            <h2 style="margin:0 0 6px 0;">MuxAI Humanizer Document Report</h2>
+            <h2 style="margin:0 0 6px 0;">Makron Humanizer Document Report</h2>
             <span class="badge">AI Detection Score: ${result.humanizedText.aiPercentage}% AI</span>
           </div>
           <div class="content">${result.rawHumanizedText.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
-          <div class="footer">Processed by MuxAI AI Detector & Humanizer. Ready for academic and professional submission.</div>
+          <div class="footer">Processed by Makron AI Detector & Humanizer. Ready for academic and professional submission.</div>
           <script>window.onload = function() { window.print(); }</script>
         </body>
       </html>
