@@ -666,7 +666,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             </span>
             <div className="flex items-center justify-center gap-3">
               <img
-                src="https://ai.mux8.com/logo0.png"
+                src="https://muxai.vercel.app/logo0.png"
                 alt="MCP"
                 className="w-10 h-10 rounded-xl shadow-xs border border-black/10 bg-white p-0.5"
               />
@@ -1387,7 +1387,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             </a>
 
             <a
-              href="https://www.linkedin.com/company/huanmux"
+              href="https://www.linkedin.com/showcase/hanaintelligence"
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 hover:text-neutral-900 font-medium transition-colors"
@@ -1398,7 +1398,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             </a>
 
             <a
-              href="https://github.com/Makron/hana.ai"
+              href="https://github.com/makronai/hana"
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 hover:text-neutral-900 font-medium transition-colors"
@@ -1413,7 +1413,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           <div className="text-xs text-neutral-400 font-mono text-center">
             &copy; 2026{' '}
             <a
-              href="https://ai.mux8.com"
+              href="https://makron.app"
               target="_blank"
               rel="noopener noreferrer"
               className="hover:text-neutral-700 hover:underline transition-colors"

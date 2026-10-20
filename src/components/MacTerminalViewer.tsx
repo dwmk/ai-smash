@@ -13,7 +13,7 @@ export const MacTerminalViewer: React.FC<MacTerminalViewerProps> = ({
   onChangeTab,
 }) => {
   const [copied, setCopied] = useState(false);
-  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://ai.mux8.com';
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://muxai.vercel.app';
 
   const rawSnippets: Record<McpTab, string> = {
     claude: `{\n  "mcpServers": {\n    "ai-smash": {\n      "url": "${origin}/api/mcp/sse",\n      "transport": "sse"\n    }\n  }\n}`,

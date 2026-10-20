@@ -611,7 +611,7 @@ export const SPECIAL_THANKS_LINKS = [
 
 export const PRODUCT_HUNT_URL = 'https://www.producthunt.com/products/ai-smash?launch=ai-smash';
 
-export const DEFAULT_USER_AVATAR_URL = 'https://ai.mux8.com/favicon.png';
+export const DEFAULT_USER_AVATAR_URL = 'https://muxai.vercel.app/favicon.png';
 
 // =====================================================================
 // 3. AI PERSONA PROFILE CONFIGURATION
@@ -646,7 +646,7 @@ export const AI_PROFILE = {
 };
 
 export const MODEL_SOURCE_DOMAIN = 'https://muxai.vercel.app';
-export const MODEL_FALLBACK_DOMAIN = 'https://ai.mux8.com';
+export const MODEL_FALLBACK_DOMAIN = 'https://muxai.vercel.app';
 
 export const OMNICHANNEL_LOGOS = {
   whatsapp: `${MODEL_SOURCE_DOMAIN}/logos/whatsapp.jpg`,
@@ -998,32 +998,32 @@ export const VRM_CONFIG = {
   cacheKey: 'hana_vrm_cache_v1',
   candidateModelUrls: [
     '/api/vrm',
-    'https://ai.mux8.com/hana_v1.5_vrm1.vrm',
+    'https://muxai.vercel.app/hana_v1.5_vrm1.vrm',
     'https://muxai.vercel.app/hana_v1.5_vrm1.vrm',
   ],
   candidateAnimationUrls: [
     '/api/animation/idle',
-    'https://ai.mux8.com/mixamo_idle.fbx',
+    'https://muxai.vercel.app/mixamo_idle.fbx',
     'https://muxai.vercel.app/mixamo_idle.fbx',
   ],
   candidateFallAnimationUrls: [
     '/api/animation/fall',
-    'https://ai.mux8.com/mixamo_fall.fbx',
+    'https://muxai.vercel.app/mixamo_fall.fbx',
     'https://muxai.vercel.app/mixamo_fall.fbx',
   ],
   candidateGetupAnimationUrls: [
     '/api/animation/getup',
-    'https://ai.mux8.com/mixamo_getup.fbx',
+    'https://muxai.vercel.app/mixamo_getup.fbx',
     'https://muxai.vercel.app/mixamo_getup.fbx',
   ],
   candidateWalkAnimationUrls: [
     '/api/animation/walk',
-    'https://ai.mux8.com/mixamo_walk.fbx',
+    'https://muxai.vercel.app/mixamo_walk.fbx',
     'https://muxai.vercel.app/mixamo_walk.fbx',
   ],
   candidateWaveAnimationUrls: [
     '/api/animation/wave',
-    'https://ai.mux8.com/mixamo_wave.fbx',
+    'https://muxai.vercel.app/mixamo_wave.fbx',
     'https://muxai.vercel.app/mixamo_wave.fbx',
   ],
   camera: {
@@ -1179,7 +1179,7 @@ export const UI_CONFIG = {
 // 11. SPLASH SCREEN CONFIGURATION
 // =====================================================================
 export const SPLASH_CONFIG = {
-  logoUrl: 'https://muxai.vercel.app/logo0.png',
+  logoUrl: 'https://makron.app/assets/logo.png',
   title: 'Makron',
   subtitle: 'Initializing voice engine & character...',
   footerLinks: [
@@ -1557,7 +1557,7 @@ export const INTEGRATION_LIBRARY: IntegrationLibraryItem[] = [
     tagline: 'Connect external apps, IDEs & tools via open protocol',
     description:
       'Standardized Model Context Protocol (MCP) connector. Connects external clients (Cursor, Claude Desktop, Windsurf, or custom scripts) to this AI model in /chat mode and allows querying external MCP servers.',
-    logoUrl: 'https://ai.mux8.com/logo0.png',
+    logoUrl: 'https://muxai.vercel.app/logo0.png',
     category: 'Workflow Automation',
     docsPath: '/docs/integration/mcp',
     fields: [
@@ -1840,7 +1840,7 @@ export const ACT_STANDBY_ANIMATIONS: ActStandbyAnimationItem[] = [
     category: 'standby',
     candidateUrls: [
       '/api/animation/idle',
-      'https://ai.mux8.com/mixamo_idle.fbx',
+      'https://muxai.vercel.app/mixamo_idle.fbx',
       'https://muxai.vercel.app/mixamo_idle.fbx',
     ],
   },
@@ -1851,7 +1851,7 @@ export const ACT_STANDBY_ANIMATIONS: ActStandbyAnimationItem[] = [
     category: 'emote',
     candidateUrls: [
       '/api/animation/wave',
-      'https://ai.mux8.com/mixamo_wave.fbx',
+      'https://muxai.vercel.app/mixamo_wave.fbx',
       'https://muxai.vercel.app/mixamo_wave.fbx',
     ],
   },
@@ -1862,7 +1862,7 @@ export const ACT_STANDBY_ANIMATIONS: ActStandbyAnimationItem[] = [
     category: 'action',
     candidateUrls: [
       '/api/animation/walk',
-      'https://ai.mux8.com/mixamo_walk.fbx',
+      'https://muxai.vercel.app/mixamo_walk.fbx',
       'https://muxai.vercel.app/mixamo_walk.fbx',
     ],
   },
@@ -1908,7 +1908,7 @@ export const ACT_STANDBY_ANIMATIONS: ActStandbyAnimationItem[] = [
     category: 'dramatic',
     candidateUrls: [
       '/api/animation/fall',
-      'https://ai.mux8.com/mixamo_fall.fbx',
+      'https://muxai.vercel.app/mixamo_fall.fbx',
       'https://muxai.vercel.app/mixamo_fall.fbx',
     ],
   },
@@ -1919,7 +1919,7 @@ export const ACT_STANDBY_ANIMATIONS: ActStandbyAnimationItem[] = [
     category: 'dramatic',
     candidateUrls: [
       '/api/animation/getup',
-      'https://ai.mux8.com/mixamo_getup.fbx',
+      'https://muxai.vercel.app/mixamo_getup.fbx',
       'https://muxai.vercel.app/mixamo_getup.fbx',
     ],
   },

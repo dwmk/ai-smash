@@ -98,7 +98,7 @@ export const DOCS_ARTICLES: DocArticle[] = [
     title: 'Hana 3D',
     category: 'Hana APIs',
     tagline: 'Embed Hana 3D VRM model, expressions, Mixamo animations, voice engine, active LLMs, and GraphQL API in third-party client apps',
-    logoUrl: 'https://ai.mux8.com/hana_icon.png',
+    logoUrl: 'https://muxai.vercel.app/hana_icon.png',
     content: {
       overview:
         'This guide provides the complete developer blueprint for allowing external third-party client applications (React, Vue, plain Three.js, Electron, Unity WebGL, or OBS livestream overlays) to embed and control Hana. You can load the 3D VRM humanoid character, trigger retargeted Mixamo animations, synchronize real-time facial emotions, drive phonetic viseme lip-sync matching spoken dialogue, query the active LLM, and dispatch remote actor directives via REST, Server-Sent Events (SSE), or GraphQL.',
@@ -433,7 +433,7 @@ WhatsApp Business Account ID: 109283746501928`,
           desc: 'In your Meta App Dashboard, navigate to WhatsApp > Configuration. Under "Webhook", click "Edit". Set the Callback URL to your Hana instance endpoint: https://your-domain/api/caller/webhooks/whatsapp. Set the Verify Token to match the verify token in Hana (default: hana_wa_verify_2026). Click "Verify and Save". Then, click "Manage" under Webhook fields and subscribe to the "messages" event field.',
           lang: 'bash',
           code: `# Meta Webhook Configuration:
-Callback URL: https://ai.mux8.com/api/caller/webhooks/whatsapp
+Callback URL: https://muxai.vercel.app/api/caller/webhooks/whatsapp
 Verify Token: hana_wa_verify_2026
 Webhook Fields Subscribed: messages, message_template_status_update`,
         },
@@ -453,7 +453,7 @@ Webhook Fields Subscribed: messages, message_template_status_update`,
     "to": "+15552348901",
     "type": "audio",
     "audio": {
-      "link": "https://ai.mux8.com/audio/hana_greeting.mp3"
+      "link": "https://muxai.vercel.app/audio/hana_greeting.mp3"
     }
   }'`,
       },
@@ -532,7 +532,7 @@ Keep your token secure and store it safely.`,
           code: `curl -X POST "https://api.telegram.org/bot123456789:ABCdefGHIjklMNO/setWebhook" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "url": "https://ai.mux8.com/api/caller/webhooks/telegram",
+    "url": "https://muxai.vercel.app/api/caller/webhooks/telegram",
     "secret_token": "hana_tg_secret_2026",
     "allowed_updates": ["message", "edited_message"]
   }'`,
@@ -548,7 +548,7 @@ Keep your token secure and store it safely.`,
   -H "Content-Type: application/json" \\
   -d '{
     "chat_id": "987654321",
-    "voice": "https://ai.mux8.com/audio/hana_greeting.ogg",
+    "voice": "https://muxai.vercel.app/audio/hana_greeting.ogg",
     "caption": "Spoken by Hana AI Receptionist"
   }'`,
       },
@@ -640,7 +640,7 @@ Keep your token secure and store it safely.`,
           desc: 'In Meta App Dashboard > Messenger > API Setup > Webhooks: 1) Click "Add Callback URL". 2) Enter https://your-domain/api/caller/webhooks/messenger. 3) Enter your Verify Token (hana_fb_verify_2026) and save. 4) Under Subscriptions, enable "messages" and "messaging_postbacks". 5) In Hana /caller, click "Verify Page" to test the Graph API connection, then click "Dispatch Call" to send a voice message!',
           lang: 'bash',
           code: `# Messenger Webhook Configuration:
-Callback URL: https://ai.mux8.com/api/caller/webhooks/messenger
+Callback URL: https://muxai.vercel.app/api/caller/webhooks/messenger
 Verify Token: hana_fb_verify_2026
 Events Subscribed: messages, messaging_postbacks`,
         },
@@ -655,7 +655,7 @@ Events Subscribed: messages, messaging_postbacks`,
       "attachment": {
         "type": "audio",
         "payload": {
-          "url": "https://ai.mux8.com/audio/hana_greeting.mp3",
+          "url": "https://muxai.vercel.app/audio/hana_greeting.mp3",
           "is_reusable": true
         }
       }
@@ -677,7 +677,7 @@ Events Subscribed: messages, messaging_postbacks`,
     title: 'Omnichannel Voice Switchboard',
     category: 'Hana features',
     tagline: 'Multi-channel RAG architecture bridging WhatsApp, Telegram, and Messenger into Hana\'s 3D avatar voice engine',
-    logoUrl: 'https://ai.mux8.com/hana_icon.png',
+    logoUrl: 'https://muxai.vercel.app/hana_icon.png',
     content: {
       overview:
         'The Omnichannel Voice Switchboard in Hana provides a unified runtime connecting Meta WhatsApp Cloud API, Telegram Bot MTProto API, and Facebook Messenger Graph API into a single reactive RAG receptionist brain. It enables real-time 3D avatar lip-sync, spoken voice synthesis, and zero-latency context grounding across every customer touchpoint.',
@@ -1101,7 +1101,7 @@ curl -X GET "https://sheets.googleapis.com/v4/spreadsheets/YOUR_SPREADSHEET_ID/v
     title: 'Model Context Protocol (MCP)',
     category: 'Integrations',
     tagline: 'Connect external apps, IDEs (Cursor, Windsurf, Claude Desktop) & tool suites via standardized MCP',
-    logoUrl: 'https://ai.mux8.com/logo0.png',
+    logoUrl: 'https://muxai.vercel.app/logo0.png',
     content: {
       overview:
         'The Model Context Protocol (MCP) is an open standard that enables external applications, developer IDEs, and AI tools to exchange tools, memory resources, and prompt context. AI Smash exposes a complete built-in MCP server endpoint (/api/mcp and /api/mcp/sse) allowing external clients like Cursor and Claude Desktop to connect directly, and allows you to attach external MCP servers to Hana in /chat mode.',

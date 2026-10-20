@@ -64,8 +64,8 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({
             decoding="sync"
             onError={(e) => {
               const target = e.currentTarget;
-              if (target.src !== 'https://ai.mux8.com/logo0.png') {
-                target.src = 'https://ai.mux8.com/logo0.png';
+              if (target.src !== 'https://makron.app/assets/logo.png') {
+                target.src = 'https://makron.app/assets/logo.png';
               }
             }}
           />

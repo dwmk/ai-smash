@@ -54,7 +54,7 @@ const PRESET_ANIMATIONS: AnimationItem[] = [
     type: 'preset',
     candidateUrls: [
       '/api/animation/idle',
-      'https://ai.mux8.com/mixamo_idle.fbx',
+      'https://muxai.vercel.app/mixamo_idle.fbx',
       'https://muxai.vercel.app/mixamo_idle.fbx',
     ],
   },
@@ -64,7 +64,7 @@ const PRESET_ANIMATIONS: AnimationItem[] = [
     type: 'preset',
     candidateUrls: [
       '/api/animation/wave',
-      'https://ai.mux8.com/mixamo_wave.fbx',
+      'https://muxai.vercel.app/mixamo_wave.fbx',
       'https://muxai.vercel.app/mixamo_wave.fbx',
     ],
   },
@@ -74,7 +74,7 @@ const PRESET_ANIMATIONS: AnimationItem[] = [
     type: 'preset',
     candidateUrls: [
       '/api/animation/walk',
-      'https://ai.mux8.com/mixamo_walk.fbx',
+      'https://muxai.vercel.app/mixamo_walk.fbx',
       'https://muxai.vercel.app/mixamo_walk.fbx',
     ],
   },

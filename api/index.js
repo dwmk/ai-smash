@@ -9,9 +9,9 @@ dotenv.config();
 
 const { Pool } = pg;
 
-export const DEFAULT_USER_AVATAR_URL = 'https://ai.mux8.com/favicon.png';
+export const DEFAULT_USER_AVATAR_URL = 'https://muxai.vercel.app/favicon.png';
 const MODEL_SOURCE_DOMAIN = 'https://muxai.vercel.app';
-const MODEL_FALLBACK_DOMAIN = 'https://ai.mux8.com';
+const MODEL_FALLBACK_DOMAIN = 'https://muxai.vercel.app';
 const ANIMATION_SOURCE_DOMAINS = [MODEL_SOURCE_DOMAIN, MODEL_FALLBACK_DOMAIN];
 
 const DEFAULT_SYSTEM_PROMPT = `You are Hana, a warm, witty, emotionally intelligent girl.
@@ -177,7 +177,7 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   username TEXT NOT NULL,
   display_name TEXT NOT NULL,
-  avatar_url TEXT NOT NULL DEFAULT 'https://ai.mux8.com/favicon.png',
+  avatar_url TEXT NOT NULL DEFAULT 'https://muxai.vercel.app/favicon.png',
   account_type TEXT NOT NULL DEFAULT 'free' CHECK (account_type IN ('free', 'paid')),
   last_payment TIMESTAMPTZ NULL DEFAULT NULL,
   last_login_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -3169,7 +3169,7 @@ const graphqlRoot = {
     handle: '@hana_muxai',
     bio: 'a flower so bright... her petals sparkled with light 🩵',
     avatarUrl: DEFAULT_USER_AVATAR_URL,
-    vrmModelUrl: 'https://ai.mux8.com/hana_v1.5_vrm1.vrm',
+    vrmModelUrl: 'https://muxai.vercel.app/hana_v1.5_vrm1.vrm',
     websiteUrl: 'https://muxai.vercel.app',
     systemPromptAbridged: DEFAULT_SYSTEM_PROMPT.slice(0, 300),
   }),

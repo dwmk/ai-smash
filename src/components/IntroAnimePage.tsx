@@ -250,14 +250,14 @@ async function fetchAssetBuffer(type: 'vrm' | 'fbx', fileName: string): Promise<
         `/api/vrm?file=${encodeURIComponent(fileName)}`,
         `${MODEL_SOURCE_DOMAIN}/${fileName}`,
         `${MODEL_FALLBACK_DOMAIN}/${fileName}`,
-        `https://ai.mux8.com/${fileName}`,
+        `https://muxai.vercel.app/${fileName}`,
         `https://muxai.vercel.app/${fileName}`,
       ]
     : [
         `/api/animation/wait?file=${encodeURIComponent(fileName)}`,
         `${MODEL_SOURCE_DOMAIN}/${fileName}`,
         `${MODEL_FALLBACK_DOMAIN}/${fileName}`,
-        `https://ai.mux8.com/${fileName}`,
+        `https://muxai.vercel.app/${fileName}`,
         `https://muxai.vercel.app/${fileName}`,
       ];
 

@@ -5,7 +5,7 @@ import { SECRET_WARDROBE_OUTFITS, resolveSecretOutfitsByRedeemCode } from '../co
 
 const { Pool } = pg;
 
-export const DEFAULT_USER_AVATAR_URL = 'https://ai.mux8.com/favicon.png';
+export const DEFAULT_USER_AVATAR_URL = 'https://muxai.vercel.app/favicon.png';
 
 export interface DbUserRecord {
   id: number;
@@ -186,7 +186,7 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   username TEXT NOT NULL,
   display_name TEXT NOT NULL,
-  avatar_url TEXT NOT NULL DEFAULT 'https://ai.mux8.com/favicon.png',
+  avatar_url TEXT NOT NULL DEFAULT 'https://muxai.vercel.app/favicon.png',
   account_type TEXT NOT NULL DEFAULT 'free' CHECK (account_type IN ('free', 'paid')),
   last_payment TIMESTAMPTZ NULL DEFAULT NULL,
   last_login_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),

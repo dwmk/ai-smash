@@ -966,7 +966,7 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
     const candidateUrls = [
       `/api/vrm?file=${encodeURIComponent(fileName)}`,
       `https://muxai.vercel.app/${fileName}`,
-      `https://ai.mux8.com/${fileName}`,
+      `https://muxai.vercel.app/${fileName}`,
     ];
 
     let buffer: ArrayBuffer | null = null;
@@ -1118,7 +1118,7 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({
     const candidateUrls = [
       `/api/animation/${animName}`,
       `https://muxai.vercel.app/${fileName}`,
-      `https://ai.mux8.com/${fileName}`,
+      `https://muxai.vercel.app/${fileName}`,
     ];
 
     let buffer: ArrayBuffer | null = null;

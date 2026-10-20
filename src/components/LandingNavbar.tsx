@@ -62,7 +62,7 @@ export const LandingNavbar: React.FC<LandingNavbarProps> = ({
             className="flex items-center gap-3 cursor-pointer select-none group"
           >
             <img
-              src="https://ai.mux8.com/hana_icon.png"
+              src="https://muxai.vercel.app/hana_icon.png"
               alt="Hana"
               className="w-9 h-9 object-contain group-hover:scale-105 transition-transform"
               onError={(e) => {
@@ -174,7 +174,7 @@ export const LandingNavbar: React.FC<LandingNavbarProps> = ({
                 className="flex items-center gap-2.5 cursor-pointer"
               >
                 <img
-                  src="https://ai.mux8.com/hana_icon.png"
+                  src="https://muxai.vercel.app/hana_icon.png"
                   alt="Hana"
                   className="w-8 h-8 object-contain"
                   onError={(e) => {
